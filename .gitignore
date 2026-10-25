@@ -1,0 +1,38 @@
+# IDE / OS
+.idea/
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Python
+__pycache__/
+
+# Local datasets (never committed)
+06_Datasets/
+
+# Conversation exports (contain unanonymised details)
+/*.txt
+
+# Personal reference manual (local only)
+03_Documentation/Manual.md
+
+# Real shop seed (01_DDL/04a_seed_shops.example.sql is the committed version)
+01_DDL/04a_seed_shops.sql
+
+# Scrapers: only the anonymised code is committed. The real shop list
+# (shops_config.py), notes, old scrapers and environments stay local.
+04_Scraper/*
+!04_Scraper/scrape_run_summary.py
+!04_Scraper/main.py
+!04_Scraper/shops.py
+!04_Scraper/shops_config.example.py
+!04_Scraper/vocab.py
+!04_Scraper/common.py
+!04_Scraper/extraction.py
+!04_Scraper/extract_prompt.md
+!04_Scraper/fetchers/
+04_Scraper/fetchers/__pycache__/
+
+# Local debugging scratch (never committed)
+08_Debugging/

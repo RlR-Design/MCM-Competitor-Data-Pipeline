@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: runs check_weekly_scrape.sh every day at 10:00 and at login.
+  Alerts when nothing has been uploaded for more than 7 days.
+  Install: see 05_Automation/README.md, "Missed-scrape alert".
+  The path below must point to this project's folder.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mcm.scrape-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/05_Automation/mac/check_weekly_scrape.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/06_Datasets/logs/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/06_Datasets/logs/launchd.log</string>
+</dict>
+</plist>
