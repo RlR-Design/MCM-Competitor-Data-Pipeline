@@ -176,11 +176,13 @@ Optional settings: `EXTRACT_MODEL` (model for `claude --model`), `EXTRACT_BATCH`
 
 ### B3. Test the upload (this runs the pipeline)
 
-Uploads an existing CSV (and its run summary, if present) to `incoming/`, exactly as the weekly job does:
+Uploads a CSV (and its run summary, if present) to `incoming/`, exactly as the weekly job does:
 
 ```bash
 05_Automation/mac/run_weekly_scrape.sh --upload-only 06_Datasets/MCM_All_products_<YYYY-MM-DD>.csv
 ```
+
+Every upload becomes part of the history. In a clean warehouse, test with the first real scrape only. An older or test CSV loaded first makes every product missing from the next scrape look sold. The first real upload can also simply be the Monday 07:00 job, or `launchctl start com.mcm.weekly-upload` once the Sunday scrape has finished (B4).
 
 Then:
 
@@ -217,16 +219,20 @@ pmset -g sched        # shows the schedule
 
 `pmset repeat` holds one wake time, so the Monday 07:00 job runs at 07:00 if the Mac is awake, otherwise as soon as it wakes. Claude Code must be logged in by then. Keep the Mac plugged in on Sunday evenings.
 
+- The script keeps the Mac from idle sleep while it runs (`caffeinate`), so a scrape is not cut off halfway. A closed lid (without an external display) still sleeps the Mac: leave the lid open.
+- Sleep is better than shut down. After a power-on with FileVault the Mac waits at the login screen, and the jobs only run once you have logged in.
+- A run that was cut off (crash, power cut) leaves a lock; the next run removes it when that run is no longer alive.
+
 ### B6. Missed-scrape alert
 
-Checks every day at 10:00 and at login. When nothing has been uploaded for more than 7 days (Mac off, Claude logged out, run failed), it shows "Scrape missed" or "Scrape waiting for Claude" with the command to run.
+Checks every day at 10:00 and at login. When nothing has been uploaded for 7 days or more (Mac off, Claude logged out, run failed), it shows "Scrape missed" or "Scrape waiting for Claude" with the command to run.
 
 ```bash
 cp 05_Automation/mac/com.mcm.scrape-watchdog.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/com.mcm.scrape-watchdog.plist
 ```
 
-Set `MAX_AGE_DAYS` in the script to change the 7 days.
+Until the first upload, the 7 days count from the day the watchdog first ran. Set `MAX_AGE_DAYS` in the script to change the 7 days.
 
 ### Change the day or time
 

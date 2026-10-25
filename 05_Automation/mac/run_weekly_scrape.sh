@@ -47,9 +47,19 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 notify() { osascript -e "display notification \"$2\" with title \"MCM weekly scrape\" subtitle \"$1\"" >/dev/null 2>&1 || true; }
 fail() { log "FAILED: $1"; notify "Failed" "$1 (log: $LOG_FILE)"; exit 1; }
 
-# One run at a time.
-mkdir "$LOCK_DIR" 2>/dev/null || fail "another run is in progress ($LOCK_DIR)"
-trap 'rmdir "$LOCK_DIR"' EXIT
+# One run at a time. A lock left by a run that died (crash, power cut) is taken over.
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    OLD_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
+    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
+        fail "another run is in progress (pid $OLD_PID, $LOCK_DIR)"
+    fi
+    log "Removing stale lock (pid ${OLD_PID:-unknown} is not running)"
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# Keep the Mac awake (no idle sleep) while this script runs.
+caffeinate -i -w $$ &
 
 log "Start (project: $PROJECT)"
 
