@@ -202,13 +202,16 @@ Then:
 Two jobs: Sunday 21:00 scrapes (about 25 minutes, no upload); Monday 07:00 extracts with Claude and uploads.
 
 ```bash
+cd ~/DataGripProjects/Statement-Competitor-Pipeline
 cp 05_Automation/mac/com.mcm.weekly-scrape.plist 05_Automation/mac/com.mcm.weekly-upload.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist
 launchctl load -w ~/Library/LaunchAgents/com.mcm.weekly-upload.plist
-launchctl list | grep com.mcm.weekly             # both listed = scheduled
+launchctl list | grep com.mcm.weekly
 ```
 
-Run them once now, without waiting for the weekend (the second after the first has finished):
+Both jobs listed = scheduled. If `load` says `Input/output error`, `unload` both plists and load them again.
+
+Optional: run them by hand (the second after the first has finished). Not on a Sunday before 21:00: the scheduled scrape would then stop, because today's raw file already exists.
 
 ```bash
 launchctl start com.mcm.weekly-scrape
