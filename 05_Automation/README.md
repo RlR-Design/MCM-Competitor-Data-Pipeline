@@ -238,6 +238,7 @@ pmset -g sched        # shows the schedule
 Checks every day at 10:00 and at login. When nothing has been uploaded for 7 days or more (Mac off, Claude logged out, run failed), it shows "Scrape missed" or "Scrape waiting for Claude" with the command to run.
 
 ```bash
+cd ~/DataGripProjects/Statement-Competitor-Pipeline
 cp 05_Automation/mac/com.mcm.scrape-watchdog.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/com.mcm.scrape-watchdog.plist
 ```
