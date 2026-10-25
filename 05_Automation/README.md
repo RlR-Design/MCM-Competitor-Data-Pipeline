@@ -95,6 +95,9 @@ gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$SA --ro
 PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
 GCS_AGENT=service-$PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com
 gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$GCS_AGENT" --role=roles/pubsub.publisher
+
+# Eventarc's own service agent (Google creates it on first use; grant the role so A5 does not wait for it).
+gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-eventarc.iam.gserviceaccount.com" --role=roles/eventarc.serviceAgent
 ```
 
 If a command asks to choose a condition, choose `None`. Permissions can take a few minutes to apply: if A5 fails on permissions, wait and run it again.
