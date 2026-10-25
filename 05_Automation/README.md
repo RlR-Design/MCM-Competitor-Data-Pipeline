@@ -124,7 +124,7 @@ The first deploy takes 2 to 4 minutes. Do not add `--retry`: a failed run must b
 
 ### A6. Email alert on failure
 
-Console → **Logging → Logs Explorer**, paste:
+Done in the Console, not the terminal (the query is not a shell command). Console → **Logging → Logs Explorer**, paste into the query box:
 
 ```
 resource.type="cloud_run_revision"
