@@ -36,3 +36,6 @@ __pycache__/
 
 # Local debugging scratch (never committed)
 08_Debugging/
+
+# Local reset script copy
+/00_full_reset.sql
