@@ -98,6 +98,9 @@ gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$GCS_AG
 
 # Eventarc's own service agent (Google creates it on first use; grant the role so A5 does not wait for it).
 gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-eventarc.iam.gserviceaccount.com" --role=roles/eventarc.serviceAgent
+
+# Build the function (new projects build with the default compute account, without build rights).
+gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" --role=roles/cloudbuild.builds.builder
 ```
 
 If a command asks to choose a condition, choose `None`. Permissions can take a few minutes to apply: if A5 fails on permissions, wait and run it again.
