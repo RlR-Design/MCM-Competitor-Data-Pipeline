@@ -92,8 +92,9 @@ gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccou
 gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$SA --role=roles/eventarc.eventReceiver
 
 # Let Cloud Storage publish events.
-GCS_AGENT=$(gcloud storage service-agent --project=$PROJECT)
-gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:$GCS_AGENT --role=roles/pubsub.publisher
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+GCS_AGENT=service-$PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com
+gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$GCS_AGENT" --role=roles/pubsub.publisher
 ```
 
 If a command asks to choose a condition, choose `None`. Permissions can take a few minutes to apply: if A5 fails on permissions, wait and run it again.
