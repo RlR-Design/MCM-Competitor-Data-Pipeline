@@ -165,7 +165,7 @@ cd ~/DataGripProjects/Statement-Competitor-Pipeline
 chmod +x 05_Automation/mac/run_weekly_scrape.sh 05_Automation/mac/check_weekly_scrape.sh
 mkdir -p 06_Datasets/logs
 .venv/bin/python -m pip install requests beautifulsoup4
-cp 04_Scraper/shops_config.example.py 04_Scraper/shops_config.py   # then fill in the real shops
+[ -e 04_Scraper/shops_config.py ] || cp 04_Scraper/shops_config.example.py 04_Scraper/shops_config.py   # new setup only; then fill in the real shops
 ```
 
 ### B2b. Claude Code for the extraction step
