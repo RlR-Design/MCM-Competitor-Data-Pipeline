@@ -189,7 +189,6 @@ SELECT
 -- 2.11 Price history (SCD Type 2). Expect current_versions = Silver products.
 -- First run: superseded 0, distinct_end_dates 0 (nothing has changed yet).
 -- Later runs: the versions a run supersedes all end on one date (one more distinct_end_date per run with price changes).
--- Test data: week 1 561 versions / 561 current; week 2 577 / 565 current / 12 superseded, distinct_end_dates 1.
 SELECT
     COUNT(*) AS versions,
     COUNTIF(is_current) AS current_versions,
@@ -215,7 +214,6 @@ SELECT
 -- =============================================================================
 
 -- 3.1 Events per type.
--- Test data after week 2: NEW_LISTING 588, MARKDOWN 5, PRICE_INCREASE 2,
 -- SOLD_MARKED 3, SOLD_ZERO_PRICE 2; no DELISTED, RELISTED or SCRAPE_GAP.
 SELECT event_type, COUNT(*) AS events
 FROM statement_competitor_data_warehouse.gold_product_events
@@ -223,7 +221,6 @@ GROUP BY event_type
 ORDER BY event_type;
 
 -- 3.2 Status per product.
--- Test data after week 2 (before the QUARANTINED status): ACTIVE 551, ACTIVE_DISCOUNTED 5,
 -- PENDING_DELIST 4, SOLD/MARKED_SOLD 3, SOLD/ZERO_PRICE 2 (565). With QUARANTINED: + 23.
 SELECT status, sold_reason, COUNT(*) AS products
 FROM statement_competitor_data_warehouse.gold_product_status
@@ -237,7 +234,6 @@ GROUP BY product_id
 HAVING COUNT(*) > 1;
 
 -- 3.4 Quarantined products and why.
--- Test data: week 1 22 (19 'Price not parseable', 3 PRICE_OUT_OF_RANGE); week 2 23 (+ the POA product).
 SELECT shop_name, quarantine_reason, COUNT(*) AS products
 FROM statement_competitor_data_warehouse.gold_product_status
 WHERE status = 'QUARANTINED'
@@ -245,7 +241,6 @@ GROUP BY shop_name, quarantine_reason
 ORDER BY products DESC;
 
 -- 3.5 Sales. Expect sold_price never 0 or NULL.
--- Test data after week 2: 5 rows, days_on_market 7; MARKED_SOLD at the listed price,
 -- ZERO_PRICE at the price before R0.00.
 SELECT shop_name, title, sold_reason, sold_at, sold_price, first_listed_price, days_on_market
 FROM statement_competitor_data_warehouse.gold_sales
