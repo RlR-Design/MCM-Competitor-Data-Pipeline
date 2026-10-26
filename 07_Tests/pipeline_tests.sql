@@ -112,7 +112,7 @@ ORDER BY error_timestamp DESC;
 
 -- 2.3 Run health, one row per run. Expect run_status HEALTHY.
 -- Test data: week 1 HEALTHY, 9/9 shops, products_in_csv 583, has_run_summary FALSE;
---            week 2 HEALTHY, 9/9 shops, products_found 584, products_in_csv 584, has_run_summary TRUE.
+--            week 2 HEALTHY, 9/9 shops, products_found 584, products_in_csv [amount of available products], has_run_summary TRUE.
 SELECT batch_id, loaded_at, run_status, shops, shops_healthy, shops_warning, shops_failed,
        failed_shops, warning_shops, products_expected, products_found, products_in_csv, has_run_summary
 FROM statement_competitor_data_warehouse.mon_scrape_runs
@@ -127,7 +127,7 @@ ORDER BY checked_at DESC;
 
 -- 2.5 Rows loaded and quarantined in Bronze per batch.
 -- Expect each CSV loaded once (one batch per file).
--- Test data: week 1 584 rows / 19 quarantined; week 2 585 / 20.
+-- Rows must match the amount of new available items.
 SELECT
     b.batch_id,
     MIN(b.ingested_at) AS loaded_at,
@@ -139,7 +139,6 @@ GROUP BY b.batch_id
 ORDER BY loaded_at;
 
 -- 2.6 Quarantine reasons per layer.
--- Test data: bronze 'Price not parseable' 39 (19 + 20); silver PRICE_OUT_OF_RANGE 6 (3 + 3).
 SELECT 'bronze' AS layer, error_reason, COUNT(*) AS records, ANY_VALUE(raw_payload) AS example
 FROM statement_competitor_data_warehouse.bronze_quarantine_bad_records
 GROUP BY error_reason
@@ -161,12 +160,10 @@ GROUP BY 1, 2
 ORDER BY records DESC;
 
 -- 2.8 Silver products and scrape time parsing. Expect no_scrape_time = 0.
--- Test data: week 1 561 products; week 2 565.
 SELECT COUNT(*) AS products, COUNTIF(timestamp_date IS NULL) AS no_scrape_time
 FROM statement_competitor_data_warehouse.silver_transformed_products;
 
 -- 2.9 Only changed rows are rewritten: products per scrape date.
--- Test data after week 2: 2026-09-15 549, 2026-09-22 16 (12 changed + 4 new).
 SELECT timestamp_date, COUNT(*) AS products
 FROM statement_competitor_data_warehouse.silver_transformed_products
 GROUP BY timestamp_date
@@ -190,8 +187,9 @@ SELECT
      WHERE s.shop_id IS NULL OR c.category_id IS NULL OR m.maker_id IS NULL OR mt.material_id IS NULL) AS orphan_keys;
 
 -- 2.11 Price history (SCD Type 2). Expect current_versions = Silver products.
--- Test data: week 1 561 versions / 561 current; week 2 577 / 565 current / 12 superseded,
--- all superseded versions ending on one date (distinct_end_dates = 1).
+-- First run: superseded 0, distinct_end_dates 0 (nothing has changed yet).
+-- Later runs: the versions a run supersedes all end on one date (one more distinct_end_date per run with price changes).
+-- Test data: week 1 561 versions / 561 current; week 2 577 / 565 current / 12 superseded, distinct_end_dates 1.
 SELECT
     COUNT(*) AS versions,
     COUNTIF(is_current) AS current_versions,
