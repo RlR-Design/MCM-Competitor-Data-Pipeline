@@ -111,7 +111,6 @@ WHERE error_type NOT LIKE 'INFO%' AND error_timestamp >= TIMESTAMP_SUB(CURRENT_T
 ORDER BY error_timestamp DESC;
 
 -- 2.3 Run health, one row per run. Expect run_status HEALTHY.
--- Test data: week 1 HEALTHY, 9/9 shops, products_in_csv 583, has_run_summary FALSE;
 --            week 2 HEALTHY, 9/9 shops, products_found 584, products_in_csv [amount of available products], has_run_summary TRUE.
 SELECT batch_id, loaded_at, run_status, shops, shops_healthy, shops_warning, shops_failed,
        failed_shops, warning_shops, products_expected, products_found, products_in_csv, has_run_summary
