@@ -42,8 +42,8 @@ Run in **Cloud Shell**: Google Cloud console → `>_` (top right). Nothing needs
 ### A1. Get the code and set variables
 
 ```bash
-git clone https://github.com/RlR-Design/MCM-Data-Warehouse.git
-cd MCM-Data-Warehouse
+git clone https://github.com/RlR-Design/MCM-Competitor-Data-Pipeline.git
+cd MCM-Competitor-Data-Pipeline
 
 PROJECT=statement-competitor-pipeline
 BUCKET=statement_competitor_data_warehouse
