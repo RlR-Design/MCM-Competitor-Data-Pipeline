@@ -48,8 +48,9 @@ For a clean rebuild, first run `01_DDL/00_reset_dataset.sql` (commented out by d
 | 7 | `01_DDL/07_create_gold_market_views.sql` | Gold market insight views |
 | 8 | `01_DDL/08_create_monitoring_views.sql` | Scrape monitoring views |
 | 9 | `01_DDL/09_create_automation_tables.sql` | Trigger log for the automation |
-| 10 | `02_Stored_Procedures/01` to `10` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance) |
-| 11 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
+| 10 | `01_DDL/10_create_gold_client_views.sql` | Gold views about the client's own shop |
+| 11 | `02_Stored_Procedures/01` to `10` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance) |
+| 12 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
 
 Checks for setup and after every run, with expected results: `07_Tests/pipeline_tests.sql`.
 
@@ -89,6 +90,7 @@ Gold objects are views and need no load step.
 | `gold_market_monthly` | month x region x category | New listings, sales and prices over time |
 | `gold_regional_demand` | region | Demand, stock and velocity per province |
 | `gold_shop_scorecard` | shop | Competitor benchmark |
+| `gold_client_price_position` | client item | Is each of the client's items priced below, in line with or above comparable competitor stock |
 
 Medians are pre-computed per row: filter them in Data Studio, do not sum or average them.
 
@@ -96,7 +98,7 @@ Medians are pre-computed per row: filter them in Data Studio, do not sum or aver
 
 Maintained by hand, no redeploy needed:
 
-- `ref_shop_locations`: verified shop coordinates.
+- `ref_shop_locations`: verified shop coordinates, and `is_client` = TRUE for the client's own shop.
 - `ref_shop_rules`: how each shop signals a sale (zero price, delisting grace period) and its scrape health thresholds. The `'*'` row is the default; a shop row overrides it per value. Set with `CALL sp_set_shop_rule(...)` (`02_Stored_Procedures/10`).
 
 ### Scrape health

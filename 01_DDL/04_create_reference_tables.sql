@@ -4,7 +4,8 @@ Script   : 04_create_reference_tables.sql
 Layer    : Reference
 Purpose  : Creates the reference tables that hold manually maintained shop data
            and seeds the default rule:
-             ref_shop_locations  verified coordinates (used by the Silver load)
+             ref_shop_locations  verified coordinates (used by the Silver load) and
+                                 the client flag (used by the Gold client views)
              ref_shop_rules      how each shop signals a sale (used by Gold) and
                                  scrape health thresholds (used by sp_check_scrape_health)
            The shops themselves are seeded by 04a_seed_shops.sql (local only;
@@ -22,8 +23,13 @@ CREATE TABLE IF NOT EXISTS statement_competitor_data_warehouse.ref_shop_location
     shop_name STRING NOT NULL OPTIONS(description="Shop name exactly as scraped (matched case-insensitively)"),
     latitude FLOAT64 OPTIONS(description="Verified latitude of the shop"),
     longitude FLOAT64 OPTIONS(description="Verified longitude of the shop"),
-    updated_at TIMESTAMP OPTIONS(description="When this location was last changed")
+    updated_at TIMESTAMP OPTIONS(description="When this location was last changed"),
+    is_client BOOL OPTIONS(description="TRUE for the client's own shop (used by the Gold client views)")
 );
+
+-- Add the client flag to an existing table.
+ALTER TABLE statement_competitor_data_warehouse.ref_shop_locations
+    ADD COLUMN IF NOT EXISTS is_client BOOL OPTIONS(description="TRUE for the client's own shop (used by the Gold client views)");
 
 -- -----------------------------------------------------------------------------
 -- ref_shop_rules: one row per shop, matched case-insensitively.
@@ -75,8 +81,8 @@ WHERE shop_name = '*';
 ===============================================================================
 Tests (run manually)
 ===============================================================================
--- Shop locations seeded by 04a (expect one row per shop).
-SELECT shop_name, latitude, longitude, updated_at
+-- Shop locations seeded by 04a (expect one row per shop, one with is_client = TRUE).
+SELECT shop_name, latitude, longitude, is_client, updated_at
 FROM statement_competitor_data_warehouse.ref_shop_locations
 ORDER BY shop_name;
 
