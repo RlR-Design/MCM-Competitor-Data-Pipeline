@@ -1,4 +1,4 @@
-# MCM-Data-Warehouse-Analytics
+# MCM-Competitor-Data-Pipeline
 Building a modern data warehouse in BigQuery for a Mid-century Modern furniture company
 
 ## **1\. Executive Summary**
