@@ -2,10 +2,10 @@
 ===============================================================================
 Script   : 09_sp_run_pipeline.sql
 Layer    : All
-Purpose  : Runs the full pipeline for one scraped CSV, steps 1 to 8 in order.
+Purpose  : Runs the full pipeline for one scraped CSV, steps 1 to 9 in order.
            Each step raises on failure, which stops the run at that step.
-When     : Deploy at setup, after scripts 01 to 08. CALL once per new scrape file.
-Requires : All DDL scripts (01_DDL) and procedures 01 to 08 deployed.
+When     : Deploy at setup, after procedures 01 to 08 and 11. CALL once per new scrape file.
+Requires : All DDL scripts (01_DDL) and procedures 01 to 08 and 11 deployed.
 Params   : p_gcs_uri  CSV location (required).
 Logs     : Each step writes to its own log table.
 Warning  : Step 1 appends the whole file to Bronze. Do not run twice for the same file.
@@ -37,6 +37,9 @@ BEGIN
 
     -- 8. Run the integrity checks.
     CALL statement_competitor_data_warehouse.sp_reconciled_silver_products();
+
+    -- 9. Rebuild the report tables Data Studio reads.
+    CALL statement_competitor_data_warehouse.sp_refresh_report_tables();
 END;
 
 
@@ -66,6 +69,10 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp 
 UNION ALL
 SELECT 'reconciled', procedure_name, error_type, error_details, error_timestamp
 FROM statement_competitor_data_warehouse.silver_reconciled_error_logs
+QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp DESC) = 1
+UNION ALL
+SELECT 'report', procedure_name, error_type, error_details, error_timestamp
+FROM statement_competitor_data_warehouse.rpt_refresh_error_logs
 QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp DESC) = 1
 ORDER BY error_timestamp;
 */

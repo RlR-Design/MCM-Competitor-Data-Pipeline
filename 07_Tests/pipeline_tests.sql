@@ -26,13 +26,15 @@ SELECT COUNT(*) AS object_count
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`;
 
 -- 1.2 Objects per type.
--- Expect after 01_DDL/01-09: BASE TABLE 22, VIEW 19.
+-- Expect after 01_DDL/01-11 and one step 9 run: BASE TABLE 27 (22 + rpt_refresh_error_logs
+-- + 4 rpt_* report tables), VIEW 20.
 SELECT table_type, COUNT(*) AS objects
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`
 GROUP BY table_type;
 
 -- 1.3 Procedures deployed.
--- Expect 10: sp_check_scrape_health ... sp_validate_silver_products, sp_run_pipeline, sp_set_shop_rule.
+-- Expect 11: sp_check_scrape_health ... sp_validate_silver_products, sp_refresh_report_tables,
+-- sp_run_pipeline, sp_set_shop_rule.
 SELECT routine_name, created, last_altered
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.ROUTINES`
 ORDER BY routine_name;
@@ -65,7 +67,8 @@ ORDER BY 1;
 -- =============================================================================
 
 -- 2.1 Every step completed.
--- Expect INFO_STAGE_COMPLETE for all 8 steps; step 8 reads "0 of 10 checks found issues".
+-- Expect INFO_STAGE_COMPLETE for all 9 steps; step 8 reads "0 of 10 checks found issues",
+-- step 9 lists the row count of each report table.
 SELECT 'bronze' AS log, scraper_job_id AS step, error_type, error_details, error_timestamp
 FROM statement_competitor_data_warehouse.bronze_raw_error_logs
 QUALIFY ROW_NUMBER() OVER (PARTITION BY scraper_job_id ORDER BY error_timestamp DESC) = 1
@@ -84,6 +87,10 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp 
 UNION ALL
 SELECT 'reconciled', procedure_name, error_type, error_details, error_timestamp
 FROM statement_competitor_data_warehouse.silver_reconciled_error_logs
+QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp DESC) = 1
+UNION ALL
+SELECT 'report', procedure_name, error_type, error_details, error_timestamp
+FROM statement_competitor_data_warehouse.rpt_refresh_error_logs
 QUALIFY ROW_NUMBER() OVER (PARTITION BY procedure_name ORDER BY error_timestamp DESC) = 1
 ORDER BY error_timestamp;
 
@@ -107,6 +114,10 @@ WHERE error_type NOT LIKE 'INFO%' AND error_timestamp >= TIMESTAMP_SUB(CURRENT_T
 UNION ALL
 SELECT 'reconciled', error_timestamp, procedure_name, error_type, error_details
 FROM statement_competitor_data_warehouse.silver_reconciled_error_logs
+WHERE error_type NOT LIKE 'INFO%' AND error_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+UNION ALL
+SELECT 'report', error_timestamp, procedure_name, error_type, error_details
+FROM statement_competitor_data_warehouse.rpt_refresh_error_logs
 WHERE error_type NOT LIKE 'INFO%' AND error_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
 ORDER BY error_timestamp DESC;
 
@@ -255,6 +266,31 @@ SELECT
     (SELECT COUNT(*) FROM statement_competitor_data_warehouse.gold_sales) AS gold_sales,
     (SELECT SUM(sales) FROM statement_competitor_data_warehouse.gold_regional_demand) AS regional_sales,
     (SELECT SUM(sales) FROM statement_competitor_data_warehouse.gold_shop_scorecard) AS shop_sales;
+
+-- 3.8 Report tables match their views and were refreshed by the latest run.
+-- Expect each rpt_ count equal to its gold_ count, and refreshed_at after the latest Bronze load.
+-- Test data (2026-11-07): market 966, client 23, value drivers 1154, sales 0.
+SELECT
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.rpt_market_products) AS rpt_market_products,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.gold_market_products) AS gold_market_products,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.rpt_client_price_position) AS rpt_client_price_position,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.gold_client_price_position) AS gold_client_price_position,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.rpt_value_drivers) AS rpt_value_drivers,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.gold_value_drivers) AS gold_value_drivers,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.rpt_sales) AS rpt_sales,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.gold_sales) AS gold_sales,
+    (SELECT MAX(refreshed_at) FROM statement_competitor_data_warehouse.rpt_market_products) AS refreshed_at,
+    (SELECT MAX(ingested_at) FROM statement_competitor_data_warehouse.bronze_raw_products) AS latest_bronze_load;
+
+-- 3.9 Client price position. Expect one row per active priced client item, no reliable
+-- match from a single shop, and set sizes that match the titles.
+-- Test data (2026-11-07): client_items 23, single_shop_reliable 0, pairs_and_sets 5, no_gap 0.
+SELECT
+    COUNT(*) AS client_items,
+    COUNTIF(is_reliable AND comparable_shops < 2) AS single_shop_reliable,
+    COUNTIF(set_size > 1) AS pairs_and_sets,
+    COUNTIF(price_gap_pct IS NULL) AS no_gap
+FROM statement_competitor_data_warehouse.rpt_client_price_position;
 
 
 -- =============================================================================

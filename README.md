@@ -49,8 +49,9 @@ For a clean rebuild, first run `01_DDL/00_reset_dataset.sql` (commented out by d
 | 8 | `01_DDL/08_create_monitoring_views.sql` | Scrape monitoring views |
 | 9 | `01_DDL/09_create_automation_tables.sql` | Trigger log for the automation |
 | 10 | `01_DDL/10_create_gold_client_views.sql` | Gold views about the client's own shop |
-| 11 | `02_Stored_Procedures/01` to `10` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance) |
-| 12 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
+| 11 | `01_DDL/11_create_report_tables.sql` | Log table for the report table refresh |
+| 12 | `02_Stored_Procedures/01` to `11` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance; `11` = report refresh, step 9) |
+| 13 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
 
 Checks for setup and after every run, with expected results: `07_Tests/pipeline_tests.sql`.
 
@@ -76,8 +77,9 @@ CALL statement_competitor_data_warehouse.sp_run_pipeline('gs://<bucket>/<file>.c
 | 6 | `sp_normalise_silver_products` | Rebuilds dimensions and the fact table |
 | 7 | `sp_load_dim_price_history` | Records price and availability changes (SCD Type 2) |
 | 8 | `sp_reconciled_silver_products` | Runs integrity checks and logs any issues |
+| 9 | `sp_refresh_report_tables` | Rebuilds the `rpt_*` report tables Data Studio reads |
 
-Gold objects are views and need no load step.
+Gold objects are views and need no load step. Step 9 saves four of them as report tables, so Data Studio reads one small table per chart instead of the full stack of views.
 
 ### Gold views for reporting
 
@@ -90,9 +92,20 @@ Gold objects are views and need no load step.
 | `gold_market_monthly` | month x region x category | New listings, sales and prices over time |
 | `gold_regional_demand` | region | Demand, stock and velocity per province |
 | `gold_shop_scorecard` | shop | Competitor benchmark |
-| `gold_client_price_position` | client item | Is each of the client's items priced below, in line with or above comparable competitor stock |
+| `gold_client_price_position` | client item | Is each of the client's items priced below, in line with or above comparable competitor stock (per piece, so pairs and sets compare fairly) |
 
 Medians are pre-computed per row: filter them in Data Studio, do not sum or average them.
+
+### Report tables for Data Studio
+
+Snapshots of Gold views, replaced by step 9 on every run (never edit them by hand). Each has a `refreshed_at` column. After changing a Gold view, `CALL sp_refresh_report_tables()`.
+
+| Table | Snapshot of |
+|---|---|
+| `rpt_market_products` | `gold_market_products` |
+| `rpt_client_price_position` | `gold_client_price_position` |
+| `rpt_value_drivers` | `gold_value_drivers` |
+| `rpt_sales` | `gold_sales` |
 
 ### Reference data
 
