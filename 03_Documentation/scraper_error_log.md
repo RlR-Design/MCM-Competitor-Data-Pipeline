@@ -54,4 +54,7 @@ through, but it deliberately works around the block the platform set up. Not use
 - [ ] Decide a lasting route for Shopify shops (permission / data feed from the shops, or accept gaps).
 
 **Attempts:**
-- 2026-11-13: re-scrape of the 6 shops with 2.1.0, scrape only (no upload): _result pending_.
+- 2026-11-13 (~55 min run): re-scrape of the 6 shops with 2.1.0, scrape only (no upload).
+  shop_9 got through on its second attempt (62 products, after 7 rate-limit waits).
+  shop_1, shop_2, shop_5, shop_6, shop_8 still answered 429 on both attempts (5 retries each, up to 300 s waits).
+  Not uploaded: a batch of 1 shop would count the other 9 as missing. Block still in place.
