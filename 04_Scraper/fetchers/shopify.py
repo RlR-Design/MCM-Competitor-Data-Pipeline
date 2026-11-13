@@ -12,8 +12,11 @@ from common import RawProduct, clean_title, cut_boilerplate, html_to_text, plain
 
 
 def fetch(shop, http, run, limit: Optional[int] = None) -> List[RawProduct]:
-    # Shopify rate-limits per client across all its stores; keep feed requests spaced out.
-    http.delay = max(http.delay, 2.0)
+    # Shopify rate-limits per IP across all its stores (a shared mobile IP hits it sooner).
+    # Space requests out; after many 429s Shopify answers 403 for a while, so retry that too.
+    http.delay = max(http.delay, 3.0)
+    http.retries = max(http.retries, 5)
+    http.blocked_status.add(403)
     products: List[RawProduct] = []
     page = 1
     while True:

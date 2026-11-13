@@ -26,6 +26,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List
@@ -36,7 +37,7 @@ from fetchers import FETCHERS
 from scrape_run_summary import RunSummary, summary_path_for
 from shops import load_shops, select_shops
 
-SCRAPER_VERSION = "2.0.0"
+SCRAPER_VERSION = "2.1.0"
 MAX_PRICE = 999999.99           # warehouse quarantines prices above this (PRICE_OUT_OF_RANGE)
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "06_Datasets" / "extraction_cache.json"
 
@@ -50,31 +51,62 @@ def raw_path_for(csv_path: str) -> str:
     return csv_path[:-4] + "_raw.jsonl"
 
 
+RETRY_COOLDOWN = 600            # seconds between a shop's failure and its second attempt
+
+
+def scrape_shop(shop, limit, summary: RunSummary) -> List[RawProduct]:
+    """One shop's available products; a failure marks its ShopRun FAILED and returns []."""
+    print(f"\n== {shop.name} ({shop.platform})", flush=True)
+    kept: Dict[str, RawProduct] = {}
+    with summary.shop(shop.name) as run:
+        http = HttpClient(run, delay=shop.delay)
+        rows = FETCHERS[shop.platform](shop, http, run, limit)
+        no_price = too_high = 0
+        for p in rows:
+            if not p.price:
+                no_price += 1
+            elif float(p.price) > MAX_PRICE:
+                too_high += 1
+            elif p.url not in kept:
+                kept[p.url] = p
+        if not kept:
+            raise RuntimeError("no available products found")
+        run.products_found = len(kept)
+        note = f", skipped {no_price} without price" if no_price else ""
+        note += f", skipped {too_high} above R{MAX_PRICE:,.0f}" if too_high else ""
+        print(f"   {len(kept)} available products{note}", flush=True)
+    if run.status != "SUCCESS":
+        print(f"   {run.status}: {run.error_message}", flush=True)
+        return []
+    return list(kept.values())
+
+
 def scrape(shops, limit, summary: RunSummary) -> List[RawProduct]:
+    """All shops, then one more attempt for the shops that failed (rate limits are often
+    lifted after a few minutes). The second attempt replaces the first in the run summary."""
     products: List[RawProduct] = []
+    failed = []
     for shop in shops:
-        print(f"\n== {shop.name} ({shop.platform})", flush=True)
-        with summary.shop(shop.name) as run:
-            http = HttpClient(run, delay=shop.delay)
-            rows = FETCHERS[shop.platform](shop, http, run, limit)
-            kept: Dict[str, RawProduct] = {}
-            no_price = too_high = 0
-            for p in rows:
-                if not p.price:
-                    no_price += 1
-                elif float(p.price) > MAX_PRICE:
-                    too_high += 1
-                elif p.url not in kept:
-                    kept[p.url] = p
-            if not kept:
-                raise RuntimeError("no available products found")
-            run.products_found = len(kept)
-            products.extend(kept.values())
-            note = f", skipped {no_price} without price" if no_price else ""
-            note += f", skipped {too_high} above R{MAX_PRICE:,.0f}" if too_high else ""
-            print(f"   {len(kept)} available products{note}", flush=True)
-        if run.status != "SUCCESS":
-            print(f"   {run.status}: {run.error_message}", flush=True)
+        rows = scrape_shop(shop, limit, summary)
+        products.extend(rows)
+        if not rows:
+            failed.append((shop, time.monotonic()))
+    if failed:
+        wait = RETRY_COOLDOWN - (time.monotonic() - failed[0][1])
+        print(f"\n{len(failed)} shop(s) failed; retrying"
+              + (f" in {wait / 60:.0f} min" if wait > 0 else ""), flush=True)
+        if wait > 0:
+            time.sleep(wait)
+        for shop, _ in failed:
+            first = next(r for r in summary.shops if r.shop_name == shop.name)
+            summary.shops.remove(first)
+            rows = scrape_shop(shop, limit, summary)
+            products.extend(rows)
+            second = summary.shops[-1]
+            second.retries += first.retries
+            second.http_errors += first.http_errors
+            if not rows:
+                second.error_message = f"2nd attempt: {second.error_message} (1st: {first.error_message})"
     return products
 
 

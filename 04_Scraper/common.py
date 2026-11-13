@@ -18,7 +18,6 @@ from typing import Dict, Optional, Sequence
 
 import requests
 from bs4 import BeautifulSoup
-
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
@@ -48,20 +47,25 @@ class FetchError(Exception):
 class HttpClient:
     """requests session with a polite delay, retries with backoff and counters for the run summary."""
 
-    RETRY_STATUS = {429, 500, 502, 503, 504}
+    RETRY_STATUS = {500, 502, 503, 504}
+    # Rate limited or blocked: wait long (Retry-After, or 30, 60, 120, 240 s, max 300 s).
+    BLOCKED_STATUS = {429}
+    MAX_BLOCKED_WAIT = 300
 
     def __init__(self, run, delay: float = 1.0, retries: int = 4, timeout: int = 30):
         self.run = run              # ShopRun: http_errors and retries are counted on it
         self.delay = delay
         self.retries = retries
         self.timeout = timeout
+        self.blocked_status = set(self.BLOCKED_STATUS)   # a fetcher may add e.g. 403
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT})
         self._last = 0.0
 
     def get(self, url: str, params: Optional[dict] = None) -> Optional[requests.Response]:
         """Response for a 2xx, None for a 404. Raises FetchError when retries are exhausted.
-        Rate limits (429) wait for Retry-After, or 15, 30, 60, 120 s; other errors 2, 4, 8, 16 s."""
+        Rate limits / blocks (blocked_status) wait for Retry-After or 30, 60, 120, 240 s (max 300 s);
+        other errors 2, 4, 8, 16 s."""
         for attempt in range(self.retries + 1):
             backoff = 2 ** (attempt + 1)
             wait = self.delay - (time.monotonic() - self._last)
@@ -72,14 +76,15 @@ class HttpClient:
                 resp = self.session.get(url, params=params, timeout=self.timeout)
                 if resp.status_code == 404:
                     return None
-                if resp.status_code not in self.RETRY_STATUS:
+                blocked = resp.status_code in self.blocked_status
+                if not blocked and resp.status_code not in self.RETRY_STATUS:
                     resp.raise_for_status()
                     return resp
                 problem = f"HTTP {resp.status_code}"
-                if resp.status_code == 429:
+                if blocked:
                     retry_after = resp.headers.get("Retry-After", "")
-                    backoff = max(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 0,
-                                  15 * 2 ** attempt)
+                    backoff = min(max(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 0,
+                                      30 * 2 ** attempt), self.MAX_BLOCKED_WAIT)
             except requests.HTTPError as exc:
                 self.run.http_errors += 1
                 raise FetchError(f"{url}: {exc}") from exc
