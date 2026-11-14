@@ -26,8 +26,8 @@ SELECT COUNT(*) AS object_count
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`;
 
 -- 1.2 Objects per type.
--- Expect after 01_DDL/01-11 and one step 9 run: BASE TABLE 27 (22 + rpt_refresh_error_logs
--- + 4 rpt_* report tables), VIEW 20.
+-- Expect after 01_DDL/01-12 and one step 9 run: BASE TABLE 27 (22 + rpt_refresh_error_logs
+-- + 4 rpt_* report tables), VIEW 26 (20 + 6 pipeline monitoring views from 01_DDL/12).
 SELECT table_type, COUNT(*) AS objects
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`
 GROUP BY table_type;
@@ -291,6 +291,19 @@ SELECT
     COUNTIF(set_size > 1) AS pairs_and_sets,
     COUNTIF(price_gap_pct IS NULL) AS no_gap
 FROM statement_competitor_data_warehouse.rpt_client_price_position;
+
+-- 3.10 Pipeline monitoring views (01_DDL/12, Pipeline Vitals dashboard).
+-- Expect 9 step rows per run, every event mapped to a step, one row per shop.
+-- Test data (2026-11-14): runs 3, step_rows 27, unmapped_events 0, shops 10, latest run
+-- 'Completed with warnings' with 9 of 9 steps, 6 shops Stale.
+SELECT
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.mon_pipeline_runs) AS runs,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.mon_pipeline_step_runs) AS step_rows,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.mon_pipeline_events WHERE step_no IS NULL) AS unmapped_events,
+    (SELECT COUNT(*) FROM statement_competitor_data_warehouse.mon_shop_freshness) AS shops,
+    (SELECT pipeline_status FROM statement_competitor_data_warehouse.mon_pipeline_runs WHERE is_latest_run) AS latest_status,
+    (SELECT FORMAT('%d of %d', steps_completed, steps_deployed) FROM statement_competitor_data_warehouse.mon_pipeline_runs WHERE is_latest_run) AS latest_steps,
+    (SELECT COUNTIF(freshness != 'Fresh') FROM statement_competitor_data_warehouse.mon_shop_freshness) AS shops_not_fresh;
 
 
 -- =============================================================================
