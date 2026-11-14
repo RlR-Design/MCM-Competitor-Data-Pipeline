@@ -28,7 +28,19 @@ robots.txt on these shops does not disallow `/products.json`.
 **Re-scrape 2026-11-14 (2.2.0, scrape only, no upload):**
 - shop_8, shop_9, shop_2, shop_1: SUCCESS first try, no retries (21 + 62 + 28 + 13 = 124 products).
 - shop_5, shop_6: still 429 part-way (big catalogues: ~9 and ~20 pages incl. sold items),
-  after many test requests that day. Re-run with pause-and-continue: _result pending_.
+  after many test requests that day. Re-run with pause-and-continue: shop_5 stayed limited on
+  pages 3-4 for ~1 hour (4 pauses); stopped by hand so the limit can clear before Sunday.
+  shop_6 not reached. Both left to the Sunday 2026-11-15 run.
+
+**Re-scrape data (not uploaded to the pipeline):** the 4 successful shops were extracted with
+the normal step (114 from cache, 10 via Claude) and saved locally in 06_Datasets/ in the
+weekly format (17 columns), to be added to the 2026-11-08 data by hand:
+- `MCM_Rescrape_2026-11-14.csv` (124 products: shop_9 62, shop_2 28, shop_8 21, shop_1 13)
+- `MCM_Rescrape_2026-11-14_run_summary.csv` (4 shops, all SUCCESS)
+- `MCM_Rescrape_2026-11-14_raw.jsonl` (raw scrape)
+
+**Watch on Sunday 2026-11-15:** shop_5 and shop_6 may still hit the limit. With 2.2.0 they
+pause and continue instead of failing at once; check their rows in the run summary on Monday.
 
 Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
 the fake browser name was the trigger).
