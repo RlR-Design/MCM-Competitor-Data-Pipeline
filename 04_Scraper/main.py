@@ -52,6 +52,8 @@ def raw_path_for(csv_path: str) -> str:
 
 
 RETRY_COOLDOWN = 600            # seconds between a shop's failure and its second attempt
+RETRY_DEADLINE = 5 * 3600       # no second attempts after this many seconds of scraping
+                                # (Sunday 21:00 scrape must end before the Monday 07:00 upload)
 
 
 def scrape_shop(shop, limit, summary: RunSummary) -> List[RawProduct]:
@@ -86,11 +88,16 @@ def scrape(shops, limit, summary: RunSummary) -> List[RawProduct]:
     lifted after a few minutes). The second attempt replaces the first in the run summary."""
     products: List[RawProduct] = []
     failed = []
+    started = time.monotonic()
     for shop in shops:
         rows = scrape_shop(shop, limit, summary)
         products.extend(rows)
         if not rows:
             failed.append((shop, time.monotonic()))
+    if failed and time.monotonic() - started > RETRY_DEADLINE:
+        print(f"\n{len(failed)} shop(s) failed; no second attempt (scrape ran over "
+              f"{RETRY_DEADLINE // 3600} h)", flush=True)
+        failed = []
     if failed:
         wait = RETRY_COOLDOWN - (time.monotonic() - failed[0][1])
         print(f"\n{len(failed)} shop(s) failed; retrying"
@@ -98,6 +105,10 @@ def scrape(shops, limit, summary: RunSummary) -> List[RawProduct]:
         if wait > 0:
             time.sleep(wait)
         for shop, _ in failed:
+            if time.monotonic() - started > RETRY_DEADLINE:
+                print(f"\n== {shop.name}: no second attempt (scrape ran over "
+                      f"{RETRY_DEADLINE // 3600} h)", flush=True)
+                continue
             first = next(r for r in summary.shops if r.shop_name == shop.name)
             summary.shops.remove(first)
             rows = scrape_shop(shop, limit, summary)

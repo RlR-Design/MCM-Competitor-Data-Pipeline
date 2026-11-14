@@ -39,6 +39,16 @@ weekly format (17 columns), to be added to the 2026-11-08 data by hand:
 - `MCM_Rescrape_2026-11-14_run_summary.csv` (4 shops, all SUCCESS)
 - `MCM_Rescrape_2026-11-14_raw.jsonl` (raw scrape)
 
+**Pre-run checks for Sunday 2026-11-15 (done 2026-11-14):**
+- Non-Shopify shops (shop_3, shop_4, shop_7, shop_10) with the honest name, 3 products each:
+  all SUCCESS; titles, prices and descriptions match the 2026-11-08 scrape (only real shop edits differ).
+- Second attempt and time limit tested offline with fake shops: a shop that fails once is
+  recovered; a shop that keeps failing ends FAILED without stopping the run.
+- New safeguard: no second attempts after 5 h of scraping, so the Sunday 21:00 scrape ends
+  before the Monday 07:00 upload.
+- launchd jobs loaded (Sun 21:00 scrape, Mon 07:00 upload), wake set for Sun 20:55, run script syntax OK.
+- No Shopify requests after 2026-11-14 ~16:00, so the rate limit can clear before the run.
+
 **Watch on Sunday 2026-11-15:** shop_5 and shop_6 may still hit the limit. With 2.2.0 they
 pause and continue instead of failing at once; check their rows in the run summary on Monday.
 
