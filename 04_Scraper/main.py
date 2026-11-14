@@ -37,7 +37,7 @@ from fetchers import FETCHERS
 from scrape_run_summary import RunSummary, summary_path_for
 from shops import load_shops, select_shops
 
-SCRAPER_VERSION = "2.1.0"
+SCRAPER_VERSION = "2.2.0"
 MAX_PRICE = 999999.99           # warehouse quarantines prices above this (PRICE_OUT_OF_RANGE)
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "06_Datasets" / "extraction_cache.json"
 

@@ -18,8 +18,10 @@ from typing import Dict, Optional, Sequence
 
 import requests
 from bs4 import BeautifulSoup
-USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+# Identify honestly as a research scraper. Since 2026-11 Shopify answers a browser
+# User-Agent from a non-browser client with 429 / 403; the honest name is let through.
+USER_AGENT = ("MCM-Competitor-Data-Pipeline (market research; "
+              "+https://github.com/RlR-Design/MCM-Competitor-Data-Pipeline)")
 
 
 def utc_now() -> str:

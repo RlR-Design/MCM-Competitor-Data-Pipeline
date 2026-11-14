@@ -11,7 +11,27 @@ Newest entry first. Shops are named shop_1..shop_10 (the key is in the local Man
 
 ---
 
-## 2026-11-08 · Shopify shops blocked (429 / 403) · OPEN
+## 2026-11-08 · Shopify shops blocked (429 / 403) · MITIGATED
+
+**Root cause found 2026-11-14:** the scraper sent a *Chrome browser* User-Agent from a Python
+client. Shopify treats a fake browser name as a bot in disguise and answers 429 / 403.
+With an honest name (`MCM-Competitor-Data-Pipeline (market research; +repo URL)`) the same
+request got 200 on all 6 Shopify shops. The 4 other shops also accept the honest name.
+robots.txt on these shops does not disallow `/products.json`.
+
+**Done (scraper 2.2.0, 2026-11-14):**
+- Honest User-Agent for all shops (no browser disguise).
+- Shopify: 20 s between page requests (was 3 s).
+- Shopify: when a page stays rate limited after 3 retries, pause 15 min and continue from
+  that page (up to 4 pauses) instead of failing or starting over from page 1.
+
+**Re-scrape 2026-11-14 (2.2.0, scrape only, no upload):**
+- shop_8, shop_9, shop_2, shop_1: SUCCESS first try, no retries (21 + 62 + 28 + 13 = 124 products).
+- shop_5, shop_6: still 429 part-way (big catalogues: ~9 and ~20 pages incl. sold items),
+  after many test requests that day. Re-run with pause-and-continue: _result pending_.
+
+Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
+the fake browser name was the trigger).
 
 **Run:** weekly scrape 2026-11-08 21:00 (scraper 2.0.0), uploaded 2026-11-09 07:02.
 

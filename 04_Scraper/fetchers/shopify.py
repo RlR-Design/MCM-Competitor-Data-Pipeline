@@ -6,21 +6,40 @@ variants at R1,111,111.00), so each available variant is its own row with
 URL .../products/<handle>?variant=<id>.
 """
 
+import time
 from typing import List, Optional
 
-from common import RawProduct, clean_title, cut_boilerplate, html_to_text, plain_price, utc_now
+from common import FetchError, RawProduct, clean_title, cut_boilerplate, html_to_text, plain_price, utc_now
+
+
+PAUSE_SECONDS = 900             # long pause when a page stays rate limited
+MAX_PAUSES = 4
 
 
 def fetch(shop, http, run, limit: Optional[int] = None) -> List[RawProduct]:
-    # Shopify rate-limits per IP across all its stores (a shared mobile IP hits it sooner).
-    # Space requests out; after many 429s Shopify answers 403 for a while, so retry that too.
-    http.delay = max(http.delay, 3.0)
-    http.retries = max(http.retries, 5)
+    # Shopify rate-limits per IP across all its stores and remembers recent requests:
+    # big shops (whole catalogue incl. sold items, ~20 pages) hit 429 part-way (2026-11-14).
+    # 20 s between pages; when a page stays limited, pause and continue from that page.
+    # After many 429s Shopify answers 403 for a while, so retry that too.
+    http.delay = max(http.delay, 20.0)
+    http.retries = 3
     http.blocked_status.add(403)
     products: List[RawProduct] = []
     page = 1
+    pauses = 0
     while True:
-        resp = http.get(f"{shop.base_url}/products.json", params={"limit": 250, "page": page})
+        try:
+            resp = http.get(f"{shop.base_url}/products.json", params={"limit": 250, "page": page})
+        except FetchError:
+            # Still limited after the retries: pause long, then continue from this page
+            # (starting over would request the earlier pages again).
+            if pauses == MAX_PAUSES:
+                raise
+            pauses += 1
+            print(f"    still rate limited on page {page}; pause {pauses} of {MAX_PAUSES}: "
+                  f"{PAUSE_SECONDS // 60} min, then continue from page {page}", flush=True)
+            time.sleep(PAUSE_SECONDS)
+            continue
         if resp is None:
             raise RuntimeError("products.json not found (is the shop still on Shopify?)")
         run.pages_scraped += 1
