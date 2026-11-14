@@ -2,7 +2,8 @@
 ===============================================================================
 Script   : 12_create_pipeline_monitoring_views.sql
 Layer    : Monitoring
-Purpose  : Vitals of the whole pipeline, for the Pipeline Vitals report:
+Purpose  : Vitals of the whole pipeline, for the Pipeline Vitals dashboard
+           (Claude dashboard, backend monitoring):
              mon_pipeline_events      every log event of every step, classified
              mon_pipeline_step_runs   one row per run per step (steps 1 to 9)
              mon_pipeline_runs        one row per run: status, timings, volumes
@@ -14,8 +15,10 @@ Purpose  : Vitals of the whole pipeline, for the Pipeline Vitals report:
            that run. Events outside any run (manual CALLs) have no run.
 When     : Initial setup, after 11_create_report_tables.sql.
            Re-run after any change to this file. Safe to re-run.
-Warning  : Views hold no data. Data Studio reads these views directly, not
-           rpt_* snapshots, so the report still shows a run whose step 9 failed.
+Warning  : Views hold no data. The Pipeline Vitals dashboard reads these views
+           directly, not rpt_* snapshots, so it still shows a run whose step 9
+           failed. Data Studio is reserved for the client-facing report and reads
+           only rpt_* tables, never mon_* views.
            mon_query_costs reads region-us-east1 job history: the dataset
            location. Change the region if the dataset moves.
 ===============================================================================

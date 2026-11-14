@@ -5,6 +5,7 @@ A bird's-eye view of the whole pipeline: did the last run work, which steps and 
 | | |
 |---|---|
 | Where | Claude dashboard "Pipeline Vitals" (claude.ai, under Artifacts). Private: only the owner can open it |
+| Role | Backend monitoring. The client-facing dashboard is the separate Data Studio report, which reads only the `rpt_*` tables |
 | Data | Live queries to BigQuery each time the page opens, through the owner's Google Cloud BigQuery connector |
 | Source objects | `mon_*` views in `01_DDL/08_create_monitoring_views.sql` and `01_DDL/12_create_pipeline_monitoring_views.sql` |
 | Built | 14 November 2026, with Claude |
@@ -139,7 +140,7 @@ Calculated on the page (shown in Sources as Formula):
 1. **Inventory.** Found the existing monitoring: `mon_scrape_runs` and `mon_scrape_shop_runs` (scrape side only), six step log tables with consistent `INFO_STAGE_START` / `INFO_STAGE_COMPLETE` events, two validity logs, `ops_pipeline_trigger_log`. Nothing covered the warehouse steps, shop freshness over time or cost.
 2. **Event types.** Listed every `error_type` the procedures write (`02_Stored_Procedures/01` to `08`, `11`) to define the Info / Warning / Error rule. All `*_FAILURE` types are procedure crashes except `SCRAPE_FAILURE`, which step 8 logs as a finding.
 3. **Views.** Wrote `01_DDL/12_create_pipeline_monitoring_views.sql` (six views) and deployed it.
-4. **Verification against known runs.** 3 runs. 26 October and 2 November: Healthy, 8 of 8 deployed steps, 930 products. 9 November: Completed with warnings, 9 of 9 steps, scrape FAILED (4 of 10 shops), 513 products, 6 shops Stale (4 rate limited with HTTP 429, 2 blocked with HTTP 403), 1 reconciliation finding, 7 price changes. Every event mapped to a step; 2 events belong to no run (the manual report refresh of 7 November). BigQuery use over 90 days: 23.9 GiB, well inside the free tier.
+4. **Verification against known runs.** 3 runs. 26 October and 2 November: Healthy, 8 of 8 deployed steps, 930 products. 9 November: Completed with warnings, 9 of 9 steps, scrape FAILED (6 of 10 shops failed), 513 products, 6 shops Stale (4 rate limited with HTTP 429, 2 blocked with HTTP 403), 1 reconciliation finding, 7 price changes. Every event mapped to a step; 2 events belong to no run (the manual report refresh of 7 November). BigQuery use over 90 days: 23.9 GiB, well inside the free tier.
 5. **Where to build.** A Data Studio report was started first (empty report "SCP Ops - Pipeline vitals" with `mon_pipeline_runs` attached). The owner then chose a Claude dashboard instead. The empty Data Studio report can be deleted.
 6. **Dashboard.** Created "Pipeline Vitals" from the Claude dashboard type: 8 live BigQuery datasets (section 5), page sections as in section 1. Every query was run and checked in BigQuery before it was stored.
 7. **Documentation.** This file; `01_DDL/12`; Manual sections 1, 2, 4, 11 and 12.1; README setup and monitoring sections; `00_reset_dataset.sql` header; `07_Tests/pipeline_tests.sql` 1.2 and new 3.10; data dictionary.
