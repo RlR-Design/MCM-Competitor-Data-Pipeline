@@ -52,6 +52,33 @@ weekly format (17 columns), to be added to the 2026-11-08 data by hand:
 **Watch on Sunday 2026-11-15:** shop_5 and shop_6 may still hit the limit. With 2.2.0 they
 pause and continue instead of failing at once; check their rows in the run summary on Monday.
 
+**Weekly run 2026-11-15 (2.2.0, 21:00 to 02:40):** 7 of 10 shops SUCCESS, 579 products.
+
+| Shop | Status | Pages | Products | Note |
+|---|---|---|---|---|
+| shop_8 | SUCCESS | 2 | 21 | no retries |
+| shop_9 | FAILED | 2 | 0 | page 3 (the empty end page) refused through 4 pauses (~80 min) |
+| shop_5 | FAILED | 2 | 0 | page 3 refused through 4 pauses |
+| shop_6 | FAILED | 2 | 0 | page 3 refused through 4 pauses |
+| shop_2 | SUCCESS | 2 | 28 | no retries |
+| shop_1 | SUCCESS | 4 | 13 | got through after 3 pauses (~45 min) |
+| shop_7, shop_4, shop_3, shop_10 | SUCCESS | | 132, 130, 32, 223 | not Shopify, no problems |
+
+No second attempts: the 3 failed shops ran the scrape past the 5 h limit.
+FAILED shops are ignored for delisting, so the Monday upload does no harm; those 3 shops
+simply have no new data this week.
+
+**Finding:** each Shopify shop now allows about 2 page requests, then refuses for an hour or
+more (per shop: the next shop answered normally straight after). The big catalogues
+(shop_5 ~8 pages, shop_6 ~19 pages incl. sold items) cannot be read in one night at this rate.
+
+**Done 2026-11-16:** the Shopify fetcher stops after a page that is shorter than page 1
+(it no longer requests the empty end page). shop_9 needs 2 requests instead of 3 and
+would have succeeded this week; shop_1 needs 3 instead of 4. Tested offline only.
+
+**Open:** a weekly schedule that reads the big Shopify shops completely under this limit
+(proposal: a few pages per shop per session, spread over the week; not built yet).
+
 Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
 the fake browser name was the trigger).
 

@@ -27,6 +27,7 @@ def fetch(shop, http, run, limit: Optional[int] = None) -> List[RawProduct]:
     products: List[RawProduct] = []
     page = 1
     pauses = 0
+    first_page_size = 0
     while True:
         try:
             resp = http.get(f"{shop.base_url}/products.json", params={"limit": 250, "page": page})
@@ -50,6 +51,12 @@ def fetch(shop, http, run, limit: Optional[int] = None) -> List[RawProduct]:
             products.extend(_rows(shop, item))
         if limit and len(products) >= limit:
             return products[:limit]
+        # A page shorter than page 1 is the last one: skip the empty end page.
+        # (Page 1's size is the reference, not a fixed 250, in case Shopify caps lower.)
+        if page == 1:
+            first_page_size = len(items)
+        elif len(items) < first_page_size:
+            break
         page += 1
     return products
 
