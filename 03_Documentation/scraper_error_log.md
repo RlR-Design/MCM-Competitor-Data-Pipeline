@@ -76,8 +76,31 @@ more (per shop: the next shop answered normally straight after). The big catalog
 (it no longer requests the empty end page). shop_9 needs 2 requests instead of 3 and
 would have succeeded this week; shop_1 needs 3 instead of 4. Tested offline only.
 
-**Open:** a weekly schedule that reads the big Shopify shops completely under this limit
-(proposal: a few pages per shop per session, spread over the week; not built yet).
+**Checks 2026-11-16 (a few requests per shop, after the upload):**
+- robots.txt on all 6 Shopify shops: no rule against `/products.json`, product pages or sitemaps.
+- Product sitemaps answer normally on all 6 (even the shops refused the night before) and list
+  every product including sold ones: shop_8 67, shop_2 210, shop_9 446, shop_1 564,
+  shop_5 1,943, shop_6 4,701. These match the feed page counts (250 per page).
+- shop_8's `/products.json` refused the very first request (429 `local_rate_limited`,
+  Retry-After 60), 12 h after its last 2 pages: the feed limit is tighter and longer than
+  "2 pages then 1 hour". No further test requests were made.
+
+**Done 2026-11-16 (scraper 2.3.0, from the Sunday 2026-11-22 scrape): the week is spread out.**
+- Sunday 21:00 starts the week (all shops); a session every 2 hours reads what is still open;
+  Thursday 19:00 extracts and uploads (was Monday 07:00). The status report is read on Wednesday.
+- Shopify: at most 2 feed requests per shop per session, stop at the first refusal (no waiting,
+  no retries), continue from that page next session. Progress is saved per shop.
+- Completeness: when the last page is read, the shop's product sitemap is compared with the
+  products seen; products missing (pages shift when a shop deletes a product mid-week) are read
+  one by one from `/products/<handle>.js`. Complete = every sitemap product read.
+- Other shops: scraped whole on Sunday; a failure is retried in the next session (up to 4 attempts).
+- A shop not complete at the upload is sent PARTIAL (products load, no delisting that week).
+- Removed: long pauses and the second attempt within one run (the sessions replace them).
+- Tested offline only (fake shops): page shift recovered via the sitemap, refusals resumed,
+  a failing shop retried then given up, run script and watchdog decisions.
+
+**Watch on 2026-11-22 to 11-26:** the first week on 2.3.0. Read the status report on Wednesday;
+shop_6 needs about 19 feed pages, so 10+ sessions.
 
 Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
 the fake browser name was the trigger).

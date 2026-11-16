@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   launchd job: runs check_weekly_scrape.sh every day at 10:00 and at login.
-  Alerts when nothing has been uploaded for more than 7 days.
+  Alerts when a Sunday scrape or a Thursday upload was missed; on Wednesday shows the week's status.
   Install: see 05_Automation/README.md, "Missed-scrape alert".
   The path below must point to this project's folder.
 -->

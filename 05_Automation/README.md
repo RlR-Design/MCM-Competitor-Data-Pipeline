@@ -1,13 +1,21 @@
 # Automation
 
-Every week the Mac runs the scraper and uploads its two files to the bucket folder `incoming/`. The upload of the products CSV triggers the `statement-pipeline-trigger` Cloud Run function, which calls `sp_run_pipeline` with that file.
+Every week the Mac scrapes the shops (spread over Sunday to Wednesday) and on Thursday uploads its two files to the bucket folder `incoming/`. The upload of the products CSV triggers the `statement-pipeline-trigger` Cloud Run function, which calls `sp_run_pipeline` with that file.
 
 ```
 Mac, launchd, Sunday 21:00 (com.mcm.weekly-scrape)
   run_weekly_scrape.sh --scrape-only
-    1. scrape the shops        ──► 06_Datasets/MCM_All_products_<Sunday>_raw.jsonl + _run_summary.csv
+    1. first session: all shops ──► 06_Datasets/MCM_All_products_<Sunday>_raw.jsonl + _run_summary.csv
+                                    + _progress.json (where each shop stands) + _status.txt (report)
 
-Mac, launchd, Monday 07:00 (com.mcm.weekly-upload)
+Mac, launchd, every 2 hours (com.mcm.scrape-sessions)
+  run_weekly_scrape.sh --continue
+    2. next session: only the shops still open (Shopify: a couple of pages each; failed
+       shops: again). Rewrites the four files. Does nothing once the week is finished.
+
+Wednesday: read the report (run_weekly_scrape.sh --status); fix anything that failed.
+
+Mac, launchd, Thursday 19:00 (com.mcm.weekly-upload)
   run_weekly_scrape.sh --resume
     1. extract with Claude     ──► MCM_All_products_<Sunday>.csv   (claude -p; if Claude is unavailable: stop, notify, --resume later)
     2. upload <name>_run_summary.csv ──► gs://statement_competitor_data_warehouse/incoming/   (first)
@@ -17,7 +25,9 @@ Mac, launchd, Monday 07:00 (com.mcm.weekly-upload)
                               statement-pipeline-trigger ──► CALL sp_run_pipeline('gs://…/incoming/<name>.csv')
 ```
 
-Mac, launchd (daily 10:00 and at login): `check_weekly_scrape.sh` alerts when nothing has been uploaded for more than 7 days.
+Mac, launchd (daily 10:00 and at login): `check_weekly_scrape.sh` alerts when a Sunday scrape or a Thursday upload was missed, and on Wednesday shows the week's status.
+
+**Why over the week:** since 2026-11 Shopify serves its product feed (`/products.json`, the whole catalogue including sold items) only a couple of pages per shop before refusing for an hour or more. The big Shopify shops need up to ~20 pages, so they are read a few pages per session, each continuing where the last stopped. Each Shopify shop finishes with a completeness check against its product sitemap; products missed because pages shifted are read one by one. See `03_Documentation/scraper_error_log.md`.
 
 | Setting | Value |
 |---|---|
@@ -172,7 +182,7 @@ mkdir -p 06_Datasets/logs
 
 The scraper fills category, maker, material, era, condition and dimensions with Claude Code in headless mode (`claude -p`). No API key is used: it runs on the Claude login of this Mac and counts toward that plan's usage.
 
-- `claude --version` must work in Terminal, and Claude Code must be logged in on Monday mornings.
+- `claude --version` must work in Terminal, and Claude Code must be logged in on Thursday evenings.
 - If Claude is not available, the scrape is still saved (`<name>_raw.jsonl`), nothing is uploaded and a "Waiting for Claude" notification appears. Log in, then run:
 
 ```bash
@@ -189,7 +199,7 @@ Uploads a CSV (and its run summary, if present) to `incoming/`, exactly as the w
 05_Automation/mac/run_weekly_scrape.sh --upload-only 06_Datasets/MCM_All_products_<YYYY-MM-DD>.csv
 ```
 
-Every upload becomes part of the history. In a clean warehouse, test with the first real scrape only. An older or test CSV loaded first makes every product missing from the next scrape look sold. The first real upload can also simply be the Monday 07:00 job, or `launchctl start com.mcm.weekly-upload` once the Sunday scrape has finished (B4).
+Every upload becomes part of the history. In a clean warehouse, test with the first real scrape only. An older or test CSV loaded first makes every product missing from the next scrape look sold. The first real upload can also simply be the Thursday 19:00 job, or `launchctl start com.mcm.weekly-upload` once the week's scrape has finished (B4).
 
 Then:
 
@@ -199,19 +209,20 @@ Then:
 
 ### B4. Switch on the weekly schedule
 
-Two jobs: Sunday 21:00 scrapes (about 25 minutes, no upload); Monday 07:00 extracts with Claude and uploads.
+Three jobs: Sunday 21:00 starts the week (about 45 minutes, no upload); every 2 hours a session reads what is still open (a few minutes; nothing once the week is finished); Thursday 19:00 extracts with Claude and uploads.
 
 ```bash
 cd ~/DataGripProjects/Statement-Competitor-Pipeline
-cp 05_Automation/mac/com.mcm.weekly-scrape.plist 05_Automation/mac/com.mcm.weekly-upload.plist ~/Library/LaunchAgents/
+cp 05_Automation/mac/com.mcm.weekly-scrape.plist 05_Automation/mac/com.mcm.scrape-sessions.plist 05_Automation/mac/com.mcm.weekly-upload.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist
+launchctl load -w ~/Library/LaunchAgents/com.mcm.scrape-sessions.plist
 launchctl load -w ~/Library/LaunchAgents/com.mcm.weekly-upload.plist
-launchctl list | grep com.mcm.weekly
+launchctl list | grep com.mcm
 ```
 
-Both jobs listed = scheduled. If `load` says `Input/output error`, `unload` both plists and load them again.
+All jobs listed = scheduled. If `load` says `Input/output error`, `unload` the plist and load it again.
 
-Optional: run them by hand (the second after the first has finished). Not on a Sunday before 21:00: the scheduled scrape would then stop, because today's raw file already exists.
+Optional: run them by hand. Not on a Sunday before 21:00: the scheduled scrape would then stop, because today's week has already started.
 
 ```bash
 launchctl start com.mcm.weekly-scrape
@@ -227,15 +238,19 @@ sudo pmset repeat wakeorpoweron U 20:55:00
 pmset -g sched        # shows the schedule
 ```
 
-`pmset repeat` holds one wake time, so the Monday 07:00 job runs at 07:00 if the Mac is awake, otherwise as soon as it wakes. Claude Code must be logged in by then. Keep the Mac plugged in on Sunday evenings.
+`pmset repeat` holds one wake time, so the 2-hourly sessions and the Thursday 19:00 upload run on time if the Mac is awake, otherwise as soon as it wakes. A session missed during sleep just runs later (the scrape has until Thursday). Claude Code must be logged in by Thursday 19:00. Keep the Mac plugged in on Sunday evenings.
 
 - The script keeps the Mac from idle sleep while it runs (`caffeinate`), so a scrape is not cut off halfway. A closed lid (without an external display) still sleeps the Mac: leave the lid open.
 - Sleep is better than shut down. After a power-on with FileVault the Mac waits at the login screen, and the jobs only run once you have logged in.
 - A run that was cut off (crash, power cut) leaves a lock; the next run removes it when that run is no longer alive.
 
-### B6. Missed-scrape alert
+### B6. Watchdog and the Wednesday check
 
-Checks every day at 10:00 and at login. When nothing has been uploaded for 7 days or more (Mac off, Claude logged out, run failed), it shows "Scrape missed" or "Scrape waiting for Claude" with the command to run.
+Checks every day at 10:00 and at login, and shows a notification with the command to run:
+
+- "Scrape missed": no week started in the last 8 days (Mac off on Sunday, run failed at the start).
+- "Upload missed": the week is not uploaded by Friday (Mac asleep on Thursday, Claude logged out).
+- "Wednesday check": the week's status, e.g. "Result: 10 of 10 shops complete. Ready for the upload."
 
 ```bash
 cd ~/DataGripProjects/Statement-Competitor-Pipeline
@@ -243,11 +258,21 @@ cp 05_Automation/mac/com.mcm.scrape-watchdog.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/com.mcm.scrape-watchdog.plist
 ```
 
-Until the first upload, the 7 days count from the day the watchdog first ran. Set `MAX_AGE_DAYS` in the script to change the 7 days.
+### The Wednesday check
+
+```bash
+05_Automation/mac/run_weekly_scrape.sh --status
+```
+
+prints `06_Datasets/MCM_All_products_<Sunday>_status.txt`: one line per shop with Complete, In progress (Shopify, still reading), Retrying (failed, tried again next session, up to 4 attempts) or FAILED (gave up). A Shopify shop is Complete only when every product in its sitemap was read.
+
+- All Complete: nothing to do; Thursday uploads.
+- FAILED: read the log (`06_Datasets/logs/weekly_scrape_<date>.log`), fix the cause, then `run_weekly_scrape.sh --continue --retry-failed` (the shop starts again with new attempts; Shopify shops keep the pages already read).
+- Still In progress on Thursday 19:00: the upload goes ahead and sends that shop as PARTIAL (its products load, but none are marked sold or delisted that week).
 
 ### Change the day or time
 
-Edit `Weekday` (0 = Sunday, 1 = Monday ... 6 = Saturday), `Hour` and `Minute` in `com.mcm.weekly-scrape.plist` (scrape) or `com.mcm.weekly-upload.plist` (extract + upload), then reload that job:
+Edit `Weekday` (0 = Sunday, 1 = Monday ... 6 = Saturday), `Hour` and `Minute` in `com.mcm.weekly-scrape.plist` (start of the week) or `com.mcm.weekly-upload.plist` (extract + upload), or `StartInterval` (seconds) in `com.mcm.scrape-sessions.plist`, then reload that job:
 
 ```bash
 cp 05_Automation/mac/com.mcm.weekly-scrape.plist ~/Library/LaunchAgents/
@@ -255,7 +280,7 @@ launchctl unload ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist
 launchctl load -w ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist
 ```
 
-Keep the upload job after the scrape (the scrape takes about 25 minutes) and update the `pmset` wake time to match.
+Leave the sessions enough time before the upload (the big Shopify shops need about 2 days of sessions) and update the `pmset` wake time to match the Sunday start.
 
 ---
 
@@ -268,8 +293,10 @@ Keep the upload job after the scrape (the scrape takes about 25 minutes) and upd
 | Re-run a file already uploaded | `CALL sp_run_pipeline('gs://statement_competitor_data_warehouse/incoming/<file>.csv')` in DataGrip. The trigger never re-runs a file it has handled |
 | Upload by hand | `05_Automation/mac/run_weekly_scrape.sh --upload-only <csv>` |
 | Extraction waiting for Claude | Log in to Claude Code, then `05_Automation/mac/run_weekly_scrape.sh --resume` |
-| Scrape missed (alert) | `05_Automation/mac/run_weekly_scrape.sh` (scrapes today's date) |
-| Pause the Mac schedule | `launchctl unload ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist ~/Library/LaunchAgents/com.mcm.weekly-upload.plist` |
+| Week's status | `05_Automation/mac/run_weekly_scrape.sh --status` |
+| A shop gave up (FAILED) | Fix the cause, then `05_Automation/mac/run_weekly_scrape.sh --continue --retry-failed` |
+| Scrape missed (alert) | `05_Automation/mac/run_weekly_scrape.sh --scrape-only` (starts a week under today's date; sessions continue it) |
+| Pause the Mac schedule | `launchctl unload ~/Library/LaunchAgents/com.mcm.weekly-scrape.plist ~/Library/LaunchAgents/com.mcm.scrape-sessions.plist ~/Library/LaunchAgents/com.mcm.weekly-upload.plist` |
 | Pause the trigger | `gcloud functions delete statement-pipeline-trigger --region=us-east1` (redeploy with A5) |
 | Update the function | `git pull` in Cloud Shell, then re-run A5 |
 
@@ -277,4 +304,4 @@ Keep the upload job after the scrape (the scrape takes about 25 minutes) and upd
 
 - The function waits up to 500 seconds for the pipeline. A longer run carries on in BigQuery; the function logs a warning and the outcome is in the pipeline logs.
 - One run at a time (`--max-instances=1`). Steps 2 to 8 work on the latest batch, so runs must never overlap: upload one products CSV per scrape.
-- The Mac script refuses to scrape twice on the same day (the dated CSV already exists), so a repeated start never uploads a second copy.
+- The Mac script refuses to start a week twice on the same day, and a week's sessions stop once its CSV exists, so a repeated start never uploads a second copy.

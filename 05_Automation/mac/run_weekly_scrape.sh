@@ -2,20 +2,31 @@
 # =============================================================================
 # Script   : run_weekly_scrape.sh
 # Layer    : Automation (Mac)
-# Purpose  : Runs the scraper, then uploads the run summary and the products CSV
-#            to the bucket. The upload of the CSV triggers the pipeline.
-#              06_Datasets/MCM_All_products_<YYYY-MM-DD>.csv
-#              06_Datasets/MCM_All_products_<YYYY-MM-DD>_run_summary.csv
-#            The scraper first saves <name>_raw.jsonl. If Claude is not available
-#            for the extraction step, nothing is uploaded: a notification asks to
-#            log in to Claude and run --resume.
-# When     : Weekly, by launchd: Sunday 21:00 --scrape-only (com.mcm.weekly-scrape.plist),
-#            Monday 07:00 --resume (com.mcm.weekly-upload.plist). Can be run by hand.
+# Purpose  : The weekly scrape, spread over the week, then one upload. The upload
+#            of the CSV triggers the pipeline.
+#              06_Datasets/MCM_All_products_<Sunday>.csv
+#              06_Datasets/MCM_All_products_<Sunday>_run_summary.csv
+#            While the week runs, every session also rewrites <name>_raw.jsonl,
+#            <name>_progress.json and <name>_status.txt (the readable report).
+#            If Claude is not available for the extraction step, nothing is
+#            uploaded: a notification asks to log in to Claude and run --resume.
+# When     : By launchd:
+#              Sunday 21:00     --scrape-only   starts the week (com.mcm.weekly-scrape.plist)
+#              every 2 hours    --continue      reads what is still open; does nothing when
+#                                               the week is finished or uploaded
+#                                               (com.mcm.scrape-sessions.plist)
+#              Thursday 19:00   --resume        extracts with Claude and uploads
+#                                               (com.mcm.weekly-upload.plist)
+#            Check the report on Wednesday: run_weekly_scrape.sh --status
 # Requires : gcloud CLI signed in (gcloud auth login) with write access to the bucket.
 #            Claude Code installed and logged in (claude on PATH).
 #            04_Scraper/main.py --output <csv> writes the files.
-# Usage    : run_weekly_scrape.sh                    scrape, extract, upload
-#            run_weekly_scrape.sh --scrape-only      scrape only (raw file + run summary), no upload
+# Usage    : run_weekly_scrape.sh                    scrape (one session), extract, upload
+#            run_weekly_scrape.sh --scrape-only      start the week: first session, no upload
+#            run_weekly_scrape.sh --continue [--retry-failed]
+#                                                    next session for the open week; --retry-failed
+#                                                    gives shops that gave up new attempts (after a fix)
+#            run_weekly_scrape.sh --status           print the open (or latest) week's report
 #            run_weekly_scrape.sh --resume [<csv>]   extract from a saved raw file, then upload
 #                                                    (default: the latest raw file without a CSV)
 #            run_weekly_scrape.sh --upload-only <csv> upload an existing CSV (and its summary)
@@ -39,6 +50,36 @@ SELF="$PROJECT/05_Automation/mac/run_weekly_scrape.sh"
 # launchd starts with a minimal PATH; add the usual gcloud and claude locations.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/share/google-cloud-sdk/bin:$HOME/google-cloud-sdk/bin:$HOME/.local/bin:$HOME/.claude/local:$PATH"
 
+# The open week: the latest progress file whose CSV has not been written yet.
+open_week_csv() {
+    local P
+    for P in $(ls -1r "$DATA_DIR"/MCM_All_products_*_progress.json 2>/dev/null); do
+        [[ -e "${P%_progress.json}.csv" ]] || { echo "${P%_progress.json}.csv"; return; }
+    done
+}
+
+case "${1:-}" in
+    --status)
+        CSV="$(open_week_csv)"
+        if [[ -z "$CSV" ]]; then
+            P="$(ls -1r "$DATA_DIR"/MCM_All_products_*_progress.json 2>/dev/null | head -1)"
+            [[ -n "$P" ]] || { echo "No weekly scrape found in $DATA_DIR"; exit 1; }
+            CSV="${P%_progress.json}.csv"
+            echo "(This week has been uploaded: $(basename "$CSV"))"
+        fi
+        cat "${CSV%.csv}_status.txt" 2>/dev/null || echo "No status report yet for $(basename "$CSV")"
+        exit 0
+        ;;
+    --continue)
+        # Every 2 hours: leave quietly (no log, no lock) when there is nothing to read.
+        CSV="$(open_week_csv)"
+        [[ -n "$CSV" ]] || exit 0
+        if [[ "${2:-}" != "--retry-failed" ]]; then
+            grep -q '"finished": true' "${CSV%.csv}_progress.json" && exit 0
+        fi
+        ;;
+esac
+
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/weekly_scrape_$(date +%Y-%m-%d).log"
 exec >>"$LOG_FILE" 2>&1
@@ -48,13 +89,20 @@ notify() { osascript -e "display notification \"$2\" with title \"MCM weekly scr
 fail() { log "FAILED: $1"; notify "Failed" "$1 (log: $LOG_FILE)"; exit 1; }
 
 # One run at a time. A lock left by a run that died (crash, power cut) is taken over.
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+# A 2-hourly session that finds a run in progress just skips; the others wait up to 30 min.
+WAITED=0
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     OLD_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
     if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
-        fail "another run is in progress (pid $OLD_PID, $LOCK_DIR)"
+        [[ "${1:-}" == "--continue" ]] && { log "Session skipped: another run is in progress (pid $OLD_PID)"; exit 0; }
+        (( WAITED >= 1800 )) && fail "another run is in progress (pid $OLD_PID, $LOCK_DIR)"
+        (( WAITED == 0 )) && log "Waiting for another run to finish (pid $OLD_PID)"
+        sleep 60; WAITED=$(( WAITED + 60 ))
+        continue
     fi
     log "Removing stale lock (pid ${OLD_PID:-unknown} is not running)"
-fi
+    rm -rf "$LOCK_DIR"
+done
 echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
@@ -95,12 +143,22 @@ case "${1:-}" in
         ;;
     --scrape-only)
         CSV="$DATA_DIR/MCM_All_products_$(date +%Y-%m-%d).csv"
-        [[ -e "${CSV%.csv}_raw.jsonl" ]] && fail "$(basename "${CSV%.csv}_raw.jsonl") already exists; today's scrape has run"
+        [[ -e "${CSV%.csv}_progress.json" || -e "${CSV%.csv}_raw.jsonl" ]] && fail "today's scrape has started already ($(basename "${CSV%.csv}")_*)"
         [[ -x "$PYTHON" ]] || fail "Python not found: $PYTHON (set SCRAPER_PYTHON)"
-        log "Scraping (no extraction, no upload) to ${CSV%.csv}_raw.jsonl"
+        log "Starting the week: first session (no extraction, no upload) for $(basename "$CSV")"
         run_scraper --scrape-only
-        log "Done: scrape saved; extraction and upload run with --resume"
-        notify "Scraped" "$(basename "${CSV%.csv}_raw.jsonl") saved; extraction and upload follow"
+        log "Done: first session saved; sessions every 2 hours continue; upload Thursday 19:00"
+        notify "Week started" "$(head -2 "${CSV%.csv}_status.txt" | tail -1)"
+        exit 0
+        ;;
+    --continue)
+        [[ -x "$PYTHON" ]] || fail "Python not found: $PYTHON (set SCRAPER_PYTHON)"
+        log "Session for $(basename "$CSV")${2:+ ($2)}"
+        run_scraper --continue ${2:+"$2"}
+        if grep -q '"finished": true' "${CSV%.csv}_progress.json"; then
+            log "Week finished: $(head -2 "${CSV%.csv}_status.txt" | tail -1)"
+            notify "Week's scrape finished" "$(head -2 "${CSV%.csv}_status.txt" | tail -1)"
+        fi
         exit 0
         ;;
     *)
@@ -124,6 +182,9 @@ if [[ -s "$SUMMARY" ]]; then
 else
     log "No run summary found; the pipeline logs RUN_SUMMARY_MISSING"
 fi
+
+STATUS_FILE="${CSV%.csv}_status.txt"
+[[ -s "$STATUS_FILE" ]] && log "Status at upload: $(head -2 "$STATUS_FILE" | tail -1)"
 
 log "Uploading $(basename "$CSV")"
 gcloud storage cp "$CSV" "$UPLOAD_PREFIX/" || fail "upload of the products CSV failed"

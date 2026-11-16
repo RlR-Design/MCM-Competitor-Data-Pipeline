@@ -2,50 +2,42 @@
 # =============================================================================
 # Script   : check_weekly_scrape.sh
 # Layer    : Automation (Mac)
-# Purpose  : Missed-scrape alert. Shows a notification when nothing has been
-#            uploaded for MAX_AGE_DAYS or more (the Mac was off, Claude was
-#            logged out, or the weekly run failed), with the command to run.
-# When     : Daily and at login, by launchd (com.mcm.scrape-watchdog.plist).
-# Reads    : 06_Datasets/logs/last_upload (written by run_weekly_scrape.sh);
-#            before the first upload, logs/watch_started (written here)
-# Settings : MAX_AGE_DAYS  days without an upload before alerting (default: 7)
+# Purpose  : Weekly scrape watchdog. Shows a notification when:
+#              - no week was started in the last 8 days (Sunday scrape missed:
+#                the Mac was off, or the run failed at the start);
+#              - a week is not uploaded by the Friday after it (the Thursday
+#                upload was missed, or extraction is waiting for Claude);
+#              - it is Wednesday: the week's status ("8 of 10 shops complete"),
+#                the reminder to read the report before Thursday's upload.
+# When     : Daily at 10:00 and at login, by launchd (com.mcm.scrape-watchdog.plist).
+# Reads    : 06_Datasets/MCM_All_products_<Sunday>_progress.json / _raw.jsonl
+#            (the week has started), .csv (built for the upload), _status.txt
 # =============================================================================
 
 set -uo pipefail
 
 PROJECT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATA_DIR="$PROJECT/06_Datasets"
-MARKER="$DATA_DIR/logs/last_upload"
-MAX_AGE_DAYS="${MAX_AGE_DAYS:-7}"
 RUNNER="$PROJECT/05_Automation/mac/run_weekly_scrape.sh"
 
 notify() { osascript -e "display notification \"$2\" with title \"MCM weekly scrape\" subtitle \"$1\"" >/dev/null 2>&1 || true; }
+days_since() { echo $(( ( $(date -j -f %Y-%m-%d "$(date +%Y-%m-%d)" +%s) - $(date -j -f %Y-%m-%d "$1" +%s) ) / 86400 )); }
 
-STARTED="$DATA_DIR/logs/watch_started"
-
-# Before the first upload, count from the day the watchdog first ran.
-LAST="$(cat "$MARKER" 2>/dev/null || echo "")"
-if [[ -n "$LAST" ]]; then
-    WHEN="Last upload $LAST"
-else
-    mkdir -p "$DATA_DIR/logs"
-    [[ -s "$STARTED" ]] || date +%Y-%m-%d > "$STARTED"
-    LAST="$(cat "$STARTED")"
-    WHEN="No upload since the watchdog started on $LAST"
+# Latest week: newest Sunday date with a progress or raw file.
+WEEK="$(ls -1 "$DATA_DIR"/MCM_All_products_*_progress.json "$DATA_DIR"/MCM_All_products_*_raw.jsonl 2>/dev/null \
+        | sed -E 's/.*MCM_All_products_([0-9]{4}-[0-9]{2}-[0-9]{2})_.*/\1/' | sort -u | tail -1)"
+if [[ -z "$WEEK" ]]; then
+    notify "Scrape missed" "No weekly scrape found. Run: $RUNNER --scrape-only"
+    exit 0
 fi
-AGE_DAYS=$(( ( $(date -j -f %Y-%m-%d "$(date +%Y-%m-%d)" +%s) - $(date -j -f %Y-%m-%d "$LAST" +%s) ) / 86400 ))
-# A weekly upload is due every 7 days; alert from the day it is overdue.
-(( AGE_DAYS < MAX_AGE_DAYS )) && exit 0
-WHEN="$WHEN ($AGE_DAYS days ago)."
+AGE="$(days_since "$WEEK")"
+BASE="$DATA_DIR/MCM_All_products_$WEEK"
+HEADLINE="$(sed -n 2p "${BASE}_status.txt" 2>/dev/null)"
 
-# A raw file without its CSV means the scrape ran but extraction is waiting for Claude.
-WAITING=""
-for RAW in "$DATA_DIR"/MCM_All_products_*_raw.jsonl; do
-    [[ -e "$RAW" && ! -e "${RAW%_raw.jsonl}.csv" ]] && WAITING="$RAW"
-done
-
-if [[ -n "$WAITING" ]]; then
-    notify "Scrape waiting for Claude" "$WHEN Log in to Claude, then run: $RUNNER --resume"
-else
-    notify "Scrape missed" "$WHEN Run: $RUNNER"
+if (( AGE >= 8 )); then
+    notify "Scrape missed" "Last week started $WEEK ($AGE days ago). Run: $RUNNER --scrape-only"
+elif (( AGE >= 5 )) && [[ ! -e "${BASE}.csv" ]]; then
+    notify "Upload missed" "Week $WEEK is not uploaded. ${HEADLINE} Log in to Claude, then run: $RUNNER --resume"
+elif [[ "$(date +%u)" == 3 && ! -e "${BASE}.csv" ]]; then
+    notify "Wednesday check, week $WEEK" "${HEADLINE:-No status report yet.} Report: $RUNNER --status"
 fi

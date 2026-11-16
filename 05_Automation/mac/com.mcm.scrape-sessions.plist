@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: every 2 hours, the next scrape session for the open week
+  (run_weekly_scrape.sh continue). Reads the Shopify pages and retries the shops
+  that are still open; does nothing (no log) when the week is finished or uploaded.
+  If the Mac is asleep, it runs on wake.
+  Install: see 05_Automation/README.md, "Weekly scrape on the Mac".
+  The path below must point to this project's folder.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mcm.scrape-sessions</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/05_Automation/mac/run_weekly_scrape.sh</string>
+        <string>--continue</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>7200</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Output that happens before the script opens its own log. -->
+    <key>StandardOutPath</key>
+    <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/06_Datasets/logs/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/riaanleroux/DataGripProjects/Statement-Competitor-Pipeline/06_Datasets/logs/launchd.log</string>
+</dict>
+</plist>

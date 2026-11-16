@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd job: scrapes every Sunday at 21:00 (local time), without extraction or upload.
-  Monday 07:00 com.mcm.weekly-upload.plist extracts with Claude and uploads.
+  launchd job: starts the week's scrape every Sunday at 21:00 (local time), without
+  extraction or upload. com.mcm.scrape-sessions.plist continues it every 2 hours;
+  Thursday 19:00 com.mcm.weekly-upload.plist extracts with Claude and uploads.
   Weekday: 0 or 7 = Sunday, 1 = Monday ... 6 = Saturday.
   Install: see 05_Automation/README.md, "Weekly scrape on the Mac".
   The path below must point to this project's folder.

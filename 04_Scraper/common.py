@@ -46,6 +46,10 @@ class FetchError(Exception):
     """A request still failed after all retries."""
 
 
+class BlockedError(FetchError):
+    """The site refused the request (rate limit) and the client is set to stop at once."""
+
+
 class HttpClient:
     """requests session with a polite delay, retries with backoff and counters for the run summary."""
 
@@ -60,6 +64,7 @@ class HttpClient:
         self.retries = retries
         self.timeout = timeout
         self.blocked_status = set(self.BLOCKED_STATUS)   # a fetcher may add e.g. 403
+        self.stop_on_blocked = False    # True: raise BlockedError at the first refusal, no waiting
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT})
         self._last = 0.0
@@ -83,6 +88,9 @@ class HttpClient:
                     resp.raise_for_status()
                     return resp
                 problem = f"HTTP {resp.status_code}"
+                if blocked and self.stop_on_blocked:
+                    self.run.http_errors += 1
+                    raise BlockedError(f"{url}: {problem}")
                 if blocked:
                     retry_after = resp.headers.get("Retry-After", "")
                     backoff = min(max(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 0,
