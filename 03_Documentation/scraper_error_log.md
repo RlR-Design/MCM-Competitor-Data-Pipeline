@@ -102,6 +102,28 @@ would have succeeded this week; shop_1 needs 3 instead of 4. Tested offline only
 **Watch on 2026-11-22 to 11-26:** the first week on 2.3.0. Read the status report on Wednesday;
 shop_6 needs about 19 feed pages, so 10+ sessions.
 
+**Re-scrape of shop_9, shop_5, shop_6 for the 2026-11-15 week (2.3.0, scrape only, no upload):**
+sessions every 2 hours from 2026-11-16 21:00, until all three are complete or 2026-11-22 18:00.
+Output kept locally (`MCM_Rescrape_2026-11-16.csv`) to be added by hand.
+
+| Session | shop_9 | shop_5 | shop_6 |
+|---|---|---|---|
+| 11-16 21:00 | refused | refused | refused |
+| 11-16 23:00 | pages 1-2, complete (62 products; all 446 sitemap products read) | pages 1-2 (146) | pages 1-2 (99) |
+| 11-17 01:00 | | pages 3-4 (169) | pages 3-4 (107) |
+| 11-17 03:00, 05:00, 07:00 | | refused | refused |
+
+**Finding (2026-11-17):** each shop allows about 4 feed pages (2 sessions), then refuses for
+about 20 hours (the Sunday-night block lifted between 21:00 and 23:00 Monday). Refused requests
+every 2 hours did not extend the block (refused at 21:00, through at 23:00), so the 2-hour gap
+is kept: the limit is pages per day, and a longer gap would not let more pages through.
+Expected: shop_5 (~8 pages) complete on 11-17 night; shop_6 (~19 pages) around 11-20/21.
+
+**Open for the weekly schedule:** at ~4 pages a day shop_6 needs ~5 days, but Sunday 21:00 to
+Thursday 19:00 is ~4 days, so shop_6 will likely be PARTIAL each week. Also, if this re-scrape
+still reads shop_6 on Sunday 11-22, the weekly scrape may start blocked for it. To be decided
+after one more night confirms the pattern (e.g. start shop_6 earlier in the week).
+
 Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
 the fake browser name was the trigger).
 
