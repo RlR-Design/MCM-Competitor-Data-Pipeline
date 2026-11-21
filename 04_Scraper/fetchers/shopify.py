@@ -95,7 +95,7 @@ def session(shop, http, run, state: dict, limit: Optional[int] = None) -> bool:
                          if state["sitemap"] else state["note"])
         return True
     except BlockedError as exc:
-        state["note"] = f"refused ({str(exc).rsplit(': ', 1)[-1]}); continues next session"
+        state["note"] = f"refused ({exc.summary()}); continues next session"
         return False
     finally:
         state["seen"] = sorted(seen)

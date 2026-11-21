@@ -24,6 +24,9 @@ USER_AGENT = ("MCM-Competitor-Data-Pipeline (market research; "
               "+https://github.com/RlR-Design/MCM-Competitor-Data-Pipeline)")
 
 
+REFUSAL_DETAIL_CHARS = 150      # of a refusal body kept for the log
+
+
 def utc_now() -> str:
     """Current UTC time, YYYY-MM-DD HH:MM:SS."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -47,7 +50,38 @@ class FetchError(Exception):
 
 
 class BlockedError(FetchError):
-    """The site refused the request (rate limit) and the client is set to stop at once."""
+    """The site refused the request (rate limit) and the client is set to stop at once.
+
+    Carries what the refusal itself said, so the session note and the run summary
+    can show why and for how long instead of only "HTTP 429": the status, the
+    Retry-After header and the limiter's own words from the body (Shopify names
+    it there, e.g. "local_rate_limited").
+    """
+
+    def __init__(self, message: str, status: int = 0, retry_after: str = "", detail: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.retry_after = retry_after
+        self.detail = detail
+
+    def summary(self) -> str:
+        """Short description of the refusal for the status report and the log."""
+        parts = [f"HTTP {self.status}" if self.status else "refused"]
+        if self.retry_after:
+            parts.append(f"Retry-After {self.retry_after}")
+        if self.detail:
+            parts.append(self.detail)
+        return ", ".join(parts)
+
+
+def refusal_detail(resp) -> str:
+    """The limiter's own words from a refused response, trimmed to one short line.
+    JSON / plain text is taken as it is; an HTML block page is reduced to its <title>."""
+    text = resp.text or ""
+    if "html" in resp.headers.get("Content-Type", "").lower():
+        match = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        text = match.group(1) if match else ""
+    return " ".join(text.split())[:REFUSAL_DETAIL_CHARS]
 
 
 class HttpClient:
@@ -88,11 +122,14 @@ class HttpClient:
                     resp.raise_for_status()
                     return resp
                 problem = f"HTTP {resp.status_code}"
+                # Read the refusal before deciding what to do with it: stop_on_blocked
+                # used to raise here and throw Retry-After and the body away.
+                retry_after = resp.headers.get("Retry-After", "") if blocked else ""
                 if blocked and self.stop_on_blocked:
                     self.run.http_errors += 1
-                    raise BlockedError(f"{url}: {problem}")
+                    raise BlockedError(f"{url}: {problem}", status=resp.status_code,
+                                       retry_after=retry_after, detail=refusal_detail(resp))
                 if blocked:
-                    retry_after = resp.headers.get("Retry-After", "")
                     backoff = min(max(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 0,
                                       30 * 2 ** attempt), self.MAX_BLOCKED_WAIT)
             except requests.HTTPError as exc:
