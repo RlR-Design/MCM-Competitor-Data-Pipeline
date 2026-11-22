@@ -124,6 +124,110 @@ Thursday 19:00 is ~4 days, so shop_6 will likely be PARTIAL each week. Also, if 
 still reads shop_6 on Sunday 11-22, the weekly scrape may start blocked for it. To be decided
 after one more night confirms the pattern (e.g. start shop_6 earlier in the week).
 
+**Why the first weeks were fine (analysis 2026-11-17, from the run summaries and logs):**
+- 10-25 and 11-01 (2.0.0, fake Chrome name, 2 s between requests): shop_6 read 20 pages in
+  39 s, shop_5 9 pages in 17 s, no refusals. Now each shop allows ~4 pages, then ~20 h refused.
+- First signs on 11-01: shop_2 had 3 refusals (429) and shop_1 one, never seen before.
+  11-08: all 6 Shopify shops refused. Our code had not changed, and on 11-13 a plain request
+  got through while the scraper was refused, so the change was on Shopify's side.
+- Likely two causes that add up (Shopify does not publish how the limit works, so not proven):
+  1. Shopify tightened its bot protection in early November (first refusals 11-01, full block
+     of the fake-browser client 11-08).
+  2. Our connection's standing: between 11-08 and 11-16 we sent probably hundreds of refused
+     requests (up to 5 retries per page, second attempts, test runs 11-13/11-14, an hour of
+     pause-and-retry on shop_5, a Sunday run that kept retrying refused pages). Rate limiters
+     often give longer blocks to clients that keep coming back after a refusal. The limit is
+     per shop (the next shop always answered normally).
+- The honest name (11-14) ended the outright block but did not bring back the old allowance.
+
+**How to tell which:** if it is our standing, weeks of polite scraping (few pages, stop at the
+first refusal) should slowly loosen the limit. The session log shows how many pages each shop
+allows before refusing; compare week by week, with no extra test requests. If it stays at ~4
+pages a day, treat it as Shopify's new normal and settle a lasting route for shop_6.
+
+**Re-scrape stopped and shop_6 rested (2026-11-20).** shop_6's allowance did not hold at
+~4 pages a day: it decayed through the week, then stopped entirely.
+
+| Day | Feed pages gained |
+|---|---|
+| 11-16 (from 21:00) | 2 |
+| 11-17 | 8 |
+| 11-18 | 4 |
+| 11-19 | 1 (page 15, last page ever read, 07:10) |
+| 11-20 | 0 (45 sessions in total, 38 refusals) |
+
+Always 429, never 403, so it is throttling and not a ban. This decay during a week of
+polite scraping (2 requests per session, stop at the first refusal) argues for cause 2
+(our standing) over cause 1 (Shopify's new normal), and against the 11-17 reading that
+refused requests do not extend the block: knocking ten times a day is the only thing we
+do between successes.
+
+**Done:** the re-scrape loop was killed 2026-11-20 14:51 (shop_9 and shop_5 were already
+complete; their data is in the progress file, `--resume` still builds the CSV).
+shop_6 is commented out of the local shop list until the **Sunday 2026-11-29** scrape, to
+rest the limiter for a full week with no requests at all. While it is out of the list the
+batch has no shop_6 rows, sp_check_scrape_health marks it SHOP_MISSING / FAILED, and Gold
+ignores FAILED scrapes for delisting, so its products are not wrongly sold off.
+
+**Found in the session data: the archive tail is dead weight for shop_6.** Available
+products per page pair, this re-scrape:
+
+| Pages | shop_5 (1,943 in sitemap) | shop_6 (4,701 in sitemap) |
+|---|---|---|
+| 1-2 | 146 | 99 |
+| 3-4 | 169 | 107 |
+| 5-6 | 192 | 107 |
+| 7-8 | 203 (complete) | 107 |
+| 9-15 | | 107 |
+
+Every one of shop_6's available products sits in the first 4 pages; pages 5-15 (2,750 feed
+entries) added nothing. For comparison, the full 20-page scrape of 10-25 found 92 available
+products, fewer than the 107 the first 4 pages hold now, so pages 16-20 are very unlikely to
+hold any. shop_5 is different: its tail still carries 34 of its 203, so this is per shop,
+not a general rule, and an early stop must be adaptive (stop after N consecutive pages with
+no available product) rather than a fixed page count.
+
+**Done (scraper 2.4.0, 2026-11-22): the early stop, switched on per shop.**
+- `Shop.early_stop_pages` (0 = off): the feed read ends after that many pages in a row without
+  an available product. Set to 2 on shop_6's (commented-out) entry, so it is on when it returns.
+- The sitemap check is replaced for such a shop by a reference check: every product it had
+  available in its last scrape (newest earlier weekly or re-scrape CSV / raw file with rows for
+  it) must be seen in the pages read, or is read on its own from `/products/<handle>.js`. A
+  product that moved past the stop is found this way, not lost.
+- More than MAX_GAP (25) of them unseen: the early stop is undone for the week and the rest of
+  the feed is read, ending with the normal sitemap check. No reference (first scrape): whole feed.
+- **Shadow check** on every other Shopify shop: it reads its whole feed exactly as before, and
+  the status report adds what the early stop would have done ("would stop at page X of Y
+  (N pages saved, K single reads), 0 lost", or "N LOST: handles"). No extra requests.
+
+**Tested offline (no requests to any shop):**
+- 18 unit tests (`04_Scraper/test_shopify_early_stop.py`): stop point, the empty run across
+  sessions and through the progress file, products past the stop recovered, sold and deleted
+  ones, the undo, no / unreadable reference, a refusal mid-check, upgrade of 2.3.0 state, the
+  shadow arithmetic, the reference loader. Each of 4 deliberate bugs makes tests fail.
+- Early stop off (all shops this week): 10,000 random feeds (refusals, sitemap gaps, deleted
+  products) run through 2.3.0 and 2.4.0 give identical requests, products, state and notes.
+- End to end through main.py: an archive-like shop gets the same products in 4 requests with
+  the early stop instead of 9 without.
+
+Not tested on live data before the week starts on purpose: reading the healthy shops' feeds on
+2026-11-22 would have used up their allowance just before the Sunday 21:00 scrape. The shadow
+check during the week is that test.
+
+**Done (scraper, 2026-11-20):** a refusal now records its status, Retry-After and the
+limiter's own words from the body (`local_rate_limited`, or an HTML block page's title)
+instead of only "HTTP 429". `stop_on_blocked` used to raise before the branch that reads
+Retry-After. No extra requests. This is what the week-by-week comparison below needs.
+
+**Watch 2026-11-22 to 11-26:** the shadow check on the 5 healthy Shopify shops, in the status
+report as each completes. "0 lost" on all of them supports the early stop; any "LOST" means
+that shop keeps its whole feed read.
+
+**Watch on 2026-11-29:** first scrape after the rest week. Compare shop_6's pages before the
+first refusal against this week (8 -> 4 -> 1 -> 0). More than ~4 means the standing recovers
+and politeness is the lever; still ~1 means the allowance is gone for good and shop_6 needs
+the early stop, a monthly cadence, or a route that is not the feed.
+
 Earlier findings below (the "connection fingerprint" explanation of 2026-11-13 was incomplete:
 the fake browser name was the trigger).
 

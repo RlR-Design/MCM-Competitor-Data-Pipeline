@@ -51,8 +51,9 @@ For a clean rebuild, first run `01_DDL/00_reset_dataset.sql` (commented out by d
 | 10 | `01_DDL/10_create_gold_client_views.sql` | Gold views about the client's own shop |
 | 11 | `01_DDL/11_create_report_tables.sql` | Log table for the report table refresh |
 | 12 | `01_DDL/12_create_pipeline_monitoring_views.sql` | Pipeline monitoring views (steps, runs, shop freshness, warehouse size, BigQuery cost) |
-| 13 | `02_Stored_Procedures/01` to `11` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance; `11` = report refresh, step 9) |
-| 14 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
+| 13 | `01_DDL/13_create_dashboard_views.sql` | One view per Pipeline Vitals dashboard section, and the weekly snapshot table |
+| 14 | `02_Stored_Procedures/01` to `12` | Stored procedures (`10` = `sp_set_shop_rule`, for maintenance; `11` = report refresh, step 9) |
+| 15 | `05_Automation/` | Cloud Run function that runs the pipeline on each upload, and the weekly Mac scrape schedule (see its README) |
 
 Checks for setup and after every run, with expected results: `07_Tests/pipeline_tests.sql`.
 
@@ -127,7 +128,7 @@ Monitoring views:
 - `mon_shop_freshness`: Fresh, Stale or Critical per shop, with its last good scrape and failures in a row.
 - `mon_warehouse_tables`, `mon_query_costs`: table sizes per layer, and BigQuery usage and cost per day.
 
-These feed the **Pipeline Vitals** dashboard, a private Claude dashboard that queries them live each time it opens. See `03_Documentation/Pipeline_Vitals_Dashboard.md`.
+These feed the **Pipeline Vitals** dashboard, a private Claude dashboard that queries them live (through the `mon_dash_` views of `01_DDL/13`) each time it opens. Every Monday at 08:03 a scheduled task freezes that week's run (`sp_snapshot_pipeline_vitals`, `02_Stored_Procedures/12`, into `ops_vitals_snapshots`) and saves a frozen copy, "Pipeline Vitals: run of <date>". See `03_Documentation/Pipeline_Vitals_Dashboard.md`.
 
 ### Scrape run summary file
 

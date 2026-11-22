@@ -4,12 +4,12 @@ A bird's-eye view of the whole pipeline: did the last run work, which steps and 
 
 | | |
 |---|---|
-| Where | Claude dashboard "Pipeline Vitals" (claude.ai, under Artifacts). Private: only the owner can open it |
+| Where | Claude dashboard "Pipeline Vitals" (claude.ai, under Artifacts): the live template. Each Monday a frozen copy, "Pipeline Vitals: run of <date>", is saved beside it (section 7). Private: only the owner can open them |
 | Role | Backend monitoring. The client-facing dashboard is the separate Data Studio report, which reads only the `rpt_*` tables |
 | Data | Live queries to BigQuery each time the page opens, through the owner's Google Cloud BigQuery connector |
-| Source objects | `mon_*` views in `01_DDL/08_create_monitoring_views.sql` and `01_DDL/12_create_pipeline_monitoring_views.sql` |
+| Source objects | `mon_dash_*` views (`01_DDL/13_create_dashboard_views.sql`), built on the `mon_*` views of `01_DDL/08` and `01_DDL/12`; weekly snapshots in `ops_vitals_snapshots` |
 | Built | 14 November 2026, with Claude |
-| Cost per open | 8 small read-only queries, about 0.5 GiB billed in total (BigQuery bills a 10 MB minimum per table read). Free tier: 1 TiB a month |
+| Cost per open | Template: 10 small read-only queries, about 0.6 GiB billed. Weekly report: 10 reads of the snapshot table, about 0.2 GiB. Weekly snapshot: about 1 GiB. Free tier: 1 TiB a month |
 
 ---
 
@@ -21,8 +21,9 @@ A bird's-eye view of the whole pipeline: did the last run work, which steps and 
 4. [Status rules](#4-status-rules)
 5. [Dashboard queries](#5-dashboard-queries)
 6. [Build log](#6-build-log)
-7. [Changing the dashboard](#7-changing-the-dashboard)
-8. [Troubleshooting](#8-troubleshooting)
+7. [Weekly frozen reports](#7-weekly-frozen-reports)
+8. [Changing the dashboard](#8-changing-the-dashboard)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
@@ -32,6 +33,8 @@ Top to bottom:
 
 | Section | Shows | Dataset |
 |---|---|---|
+| Mode line | Under the title: Live (the template) or Frozen (a weekly report), with the run and when it was frozen | `report` |
+| This week's problems | First block on the page. Every problem in the latest run, most urgent first, each with severity, area, what happened, what to do and a link to the section with the evidence. A summary line counts them and names the area to focus on first. The block's edge turns red for a Critical problem, amber otherwise, green when there are none | `problems` |
 | Header | Overall health pill (Healthy, Watch, Needs attention) and one sentence on the latest run: steps completed, shops loaded, scrape date, next scheduled run | `vitals` |
 | Vital tiles | Last run (days ago), steps completed, shops scraped, products loaded (with change on the previous run), data quality (rows quarantined, reconciliation findings, price changes), run time (scrape and BigQuery minutes, HTTP errors), BigQuery GiB this month. A coloured edge marks a tile that needs attention | `vitals`, `runs` |
 | Latest run, step by step | The nine steps of `sp_run_pipeline` as a strip, each with status and duration | `steps` |
@@ -62,8 +65,15 @@ mon_scrape_shop_runs, mon_scrape_runs
 mon_pipeline_events → mon_pipeline_step_runs → mon_pipeline_runs
 mon_shop_freshness, mon_warehouse_tables, mon_query_costs
         │
-        ▼  8 read-only queries (execute_sql_readonly), run when the page opens
-Claude dashboard "Pipeline Vitals"
+        ▼  01_DDL/13: one view per dashboard section
+mon_dash_vitals, _problems, _steps, _shopruns, _runs, _shops, _events, _costs, _layers
+        │                                   │
+        │ live, each time the page opens    │ Monday: sp_snapshot_pipeline_vitals
+        ▼                                   ▼
+Claude dashboard "Pipeline Vitals"     ops_vitals_snapshots (one JSON set per run)
+(the template)                              │
+                                            ▼ read by
+                                  "Pipeline Vitals: run of <date>" (frozen weekly report)
 ```
 
 Design decisions:
@@ -71,6 +81,7 @@ Design decisions:
 - **Views, not report tables.** The client report reads `rpt_*` snapshots rebuilt by step 9. Monitoring must still work when step 9 itself fails, so the dashboard reads the `mon_*` views live.
 - **One run = one Bronze load.** The logs of steps 4 to 9 carry their own batch ids, so events are attached to a run by time: everything logged from step 1's start, for up to 6 hours, until the next run starts. Manual `CALL`s outside that window belong to no run and still show in Warnings and errors.
 - **Steps that did not exist yet** show as Not deployed, not as failures (step 9 was added on 7 November 2026, so the runs of 26 October and 2 November show it as Not deployed).
+- **One view per section.** Since 15 November 2026 every dataset on the page reads a `mon_dash_<dataset id>` view, so the logic lives in the repository, is versioned in git, and can be frozen by one generic procedure.
 - **Claude dashboard rather than Data Studio.** The owner chose it on 14 November 2026: it queries BigQuery live without a separate data source per view, opens on a phone, and keeps the client's Data Studio report separate from internal monitoring.
 
 ---
@@ -113,9 +124,9 @@ Figures taken from log text: `silver_rows_changed` (step 4 "Rows inserted or cha
 
 ## 5. Dashboard queries
 
-All run with `execute_sql_readonly` on project `statement-competitor-pipeline`, timeout 110 seconds. Each dataset reads the BigQuery answer with the dashboard's BigQuery reader (`read.bigquery`). The full SQL is visible and editable in the dashboard's Sources panel; this table records what each one does.
+All run with `execute_sql_readonly` on project `statement-competitor-pipeline`, timeout 110 seconds. In the template each dataset is `SELECT * FROM mon_dash_<id> ORDER BY row_order`; in a weekly report it is `SELECT rows_json FROM ops_vitals_snapshots WHERE run_batch_id = '<run>' AND dataset = '<id>'`. One loader per dataset reads either form: plain rows as they come, or the single `rows_json` column expanded into the same rows. The logic of each section is in its view (`01_DDL/13`); this table records what each one reads.
 
-| Dataset | Reads | Rows | Feeds |
+| Dataset (view `mon_dash_<id>`) | Reads | Rows | Feeds |
 |---|---|---|---|
 | `vitals` | `mon_pipeline_runs` (latest), `mon_shop_freshness`, `mon_query_costs` (this month), `rpt_market_products` | 1 | Header, tiles |
 | `steps` | `mon_pipeline_step_runs` for the last 12 runs | 9 per run | Step strip, step history grid |
@@ -125,11 +136,34 @@ All run with `execute_sql_readonly` on project `statement-competitor-pipeline`, 
 | `events` | `mon_pipeline_events` where severity is not Info | up to 40 | Warnings and errors |
 | `costs` | `mon_query_costs` grouped by week | week x source | GiB per week chart |
 | `layers` | `mon_warehouse_tables` grouped by layer | 1 per layer | Tables per layer |
+| `problems` | `mon_pipeline_runs` (latest and previous), `mon_pipeline_step_runs`, `mon_scrape_shop_runs`, `mon_shop_freshness`, `mon_pipeline_events` | 1 per problem | This week's problems |
+| `report` (no view) | Template: a constant row, mode `live`. Weekly report: the run and snapshot time from `ops_vitals_snapshots`, mode `frozen` | 1 | Mode line |
 
 Calculated on the page (shown in Sources as Formula):
 
 - `products_change`: products in the latest run minus the run before.
 - `cost_weeks`: the weekly cost rows pivoted to one column per source.
+- `problem_summary`: number of problems per severity, and the area of the most urgent one.
+
+### Problem rules (`mon_dash_problems`)
+
+Every rule looks at the latest run only. Change a rule, threshold or "What to do" text in `01_DDL/13_create_dashboard_views.sql`, re-run the file, and add a build log entry.
+
+| Area | Problem | Severity | Raised when |
+|---|---|---|---|
+| Schedule | No pipeline run for N days | Critical | Last run more than 8 days ago |
+| Warehouse | Step N failed or did not run | Critical | `step_status` Failed or Not run |
+| Scraper | N shops rate limited (HTTP 429), blocked (HTTP 403), not found (HTTP 404) or other cause | High; Critical if any of them failed two runs or more in a row | Shop `health_status` FAILED, grouped by cause |
+| Scraper | N shops scraped with warnings | Medium | Shop `health_status` WARNING |
+| Data quality | N rows quarantined | High | Bronze plus Silver quarantined rows above 0 |
+| Data quality | Reconciliation finding: TYPE | High | Step 8 warning other than `SCRAPE_FAILURE` (failed scrapes are already listed under Scraper) |
+| Warehouse | Step N: warnings | Medium | Warnings from any step except 3 and 8 |
+| Volume | Products loaded fell N% | High | Products in the CSV below 80% of the previous run |
+| Performance | Scrape took N min, up N% | Medium | Scrape time up more than 25% and at least 5 minutes on the previous run |
+
+Order: severity, then causes before symptoms (Schedule, Warehouse, Scraper, Data quality, Volume, Performance), then size of impact (products affected, minutes added). A volume drop caused by failed shops therefore lists below the scraper problems that caused it.
+
+Each problem carries a fixed "What to do" text. Keep them in line with `scraper_error_log.md` and the Manual as fixes are learnt.
 
 ---
 
@@ -145,14 +179,68 @@ Calculated on the page (shown in Sources as Formula):
 6. **Dashboard.** Created "Pipeline Vitals" from the Claude dashboard type: 8 live BigQuery datasets (section 5), page sections as in section 1. Every query was run and checked in BigQuery before it was stored.
 7. **Documentation.** This file; `01_DDL/12`; Manual sections 1, 2, 4, 11 and 12.1; README setup and monitoring sections; `00_reset_dataset.sql` header; `07_Tests/pipeline_tests.sql` 1.2 and new 3.10; data dictionary.
 
+### 14 November 2026, evening
+
+8. **This week's problems.** Added the `problems` dataset and the block at the top of the page, at the owner's request: the first thing on the page should show what went wrong in the week and where to focus. Rules and order as in section 5. For the run of 9 November it lists: 4 shops rate limited (HTTP 429, about 377 products), 2 shops blocked (HTTP 403, about 38 products), products loaded down 45% (930 to 513), scrape time up 45% (63.9 min). Focus first on: Scraper. The overall health line and the vital tiles moved directly below it.
+
+### 15 November 2026
+
+9. **Template and weekly frozen reports**, at the owner's request: the dashboard becomes the template for a frozen report of each week's run, while staying open to change as new problems are found.
+   - Moved every dashboard query into a view, `01_DDL/13_create_dashboard_views.sql` (`mon_dash_vitals`, `_problems`, `_steps`, `_shopruns`, `_runs`, `_shops`, `_events`, `_costs`, `_layers`), each with a `row_order` column. Same rows as before; checked view by view.
+   - New table `ops_vitals_snapshots` and procedure `sp_snapshot_pipeline_vitals` (`02_Stored_Procedures/12`), which freezes every `mon_dash_` view for the latest run.
+   - Template: datasets now read the views; one loader per dataset reads live rows or a frozen snapshot; new `report` dataset and mode line (Live / Frozen).
+   - First weekly report: "Pipeline Vitals: run of 9 Nov 2026", from the snapshot of `BATCH_20261109_050245`.
+   - Scheduled task "Pipeline Vitals weekly report": Mondays 08:03 SAST (section 7).
+10. **Problem advice corrected.** The "What to do" texts for HTTP 429 and 403 still advised a browser User-Agent, which contradicts the scraper fix of 14 November (2.2.0 sends an honest User-Agent; see `scraper_error_log.md`). Rewritten in `mon_dash_problems`, and the 9 November snapshot retaken so its report carries the corrected texts.
+11. **Restored documentation.** The edit of this file on the evening of 14 November started from an older copy and dropped the "This week's problems" sections; restored, keeping that edit's Role line and wording.
+
 Add an entry here for every later change: date, what changed, why.
 
 ---
 
-## 7. Changing the dashboard
+## 7. Weekly frozen reports
 
-- **Ask Claude** in a chat for any change by name ("add a chart of HTTP errors per shop", "make the shop table sortable"). The dashboard's page and queries live in the dashboard itself, not in this repository.
-- **Edit a query yourself:** open Sources beside the page, open the dataset, edit its query, test, save. A saved earlier version can be restored there.
+**What they are.** Each Monday a copy of the template is saved as a separate dashboard, "Pipeline Vitals: run of <date>" (for example "Pipeline Vitals: run of 16 Nov 2026"). It has the template's page as it was that Monday, and that run's numbers frozen: they never change, however much later runs or fixes change the warehouse. The template stays live and keeps improving; past reports keep the layout they were made with.
+
+**How a week is frozen.**
+
+1. The pipeline runs on Monday about 07:00 (step 1 to 9).
+2. At 08:03 the scheduled task "Pipeline Vitals weekly report" (claude.ai, scheduled tasks) starts:
+   - Checks the latest run is from this week. If not, no report: it tells the owner the pipeline did not run.
+   - `CALL sp_snapshot_pipeline_vitals(FALSE)`: copies every `mon_dash_` view into `ops_vitals_snapshots` for that run (one JSON array per view). A second call keeps the existing snapshot.
+   - Reads the template's page and datasets, creates the new dashboard, points every `mon_dash_` dataset at the snapshot, sets `report` to mode `frozen`, and copies the page unchanged.
+   - Sends the owner a push notification: the run, this week's problems in order, the focus area and the report link.
+3. The task runs in the cloud with automatic approval; it reads BigQuery through the owner's Google Cloud BigQuery connector and writes nothing in BigQuery except the snapshot.
+
+**Making one by hand** (for a missed Monday, or after a manual pipeline run): ask Claude "make this week's Pipeline Vitals report", or run the scheduled task now from its page. Only the latest run can be frozen, so do it before the next run.
+
+**Re-freezing a week.** `CALL sp_snapshot_pipeline_vitals(TRUE)` retakes the snapshot of the latest run (its report shows the new snapshot time). Past runs cannot be re-frozen.
+
+**Improving the reports over time.** Change the template, not the reports. A change reaches every report made after it:
+
+| Change | Where | Frozen next Monday? |
+|---|---|---|
+| Wording, layout, a chart drawn from existing data | Template page (ask Claude) | Yes, the page is copied |
+| A new problem rule, threshold or "What to do" text | `mon_dash_problems` in `01_DDL/13`, re-run the file | Yes |
+| A new section with new data | A new view `mon_dash_<id>` in `01_DDL/13` and a dataset `<id>` in the template reading it | Yes, the procedure freezes every `mon_dash_` view |
+| A dataset that does not read a `mon_dash_` view | Template | No: copied as a live query; the task reports it as "not frozen" |
+
+To give an older report a newer layout, ask Claude to copy the template's current page into it; its data stays as frozen.
+
+**Where they are.** claude.ai, Artifacts; all titled "Pipeline Vitals: run of ...". The snapshots themselves:
+
+```sql
+SELECT run_batch_id, MIN(taken_at) AS taken_at, COUNT(*) AS datasets, SUM(row_count) AS row_count
+FROM statement_competitor_data_warehouse.ops_vitals_snapshots
+GROUP BY run_batch_id
+ORDER BY taken_at DESC;
+```
+
+## 8. Changing the dashboard
+
+- **Ask Claude** in a chat for any change by name ("add a chart of HTTP errors per shop", "make the shop table sortable"). The page lives in the template dashboard; the logic of each section lives in its `mon_dash_` view in `01_DDL/13`.
+- **Change the template, not a weekly report.** Every Monday's report copies the template as it is then (section 7).
+- **Change what a section shows:** edit its `mon_dash_` view in `01_DDL/13` and re-run the file. Keep the `row_order` column. Editing a query in the dashboard's Sources panel works for the template, but anything that no longer reads a `mon_dash_` view is not frozen in the weekly reports.
 - **Change a rule** (what counts as Stale, the 6 hour run window, severity): change the view in `01_DDL/12`, re-run the file in BigQuery, then note it in the build log. The dashboard picks it up on its next load.
 - **Add a pipeline step:** add it to the `CASE` in `mon_pipeline_events` and to the `steps` list in `mon_pipeline_step_runs`, re-run `01_DDL/12`.
 - **Rename or drop a `mon_*` column:** search the dashboard's queries in Sources first; the page reads columns by name.
@@ -160,7 +248,7 @@ Add an entry here for every later change: date, what changed, why.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -170,4 +258,6 @@ Add an entry here for every later change: date, what changed, why.
 | A run is missing | Step 1 did not log a start (the trigger never fired) | Check `ops_pipeline_trigger_log` and the Cloud Run function logs |
 | Events show under no run | A procedure was called by hand more than 6 hours after step 1, or with no step 1 | Expected for manual runs |
 | Last run tile shows more than 8 days | The weekly scrape or upload did not happen | Check the Mac scrape log (`05_Automation/mac/`) and the `incoming/` bucket folder |
+| No weekly report on Monday | The pipeline did not run (the task says so), or the task failed | Open the scheduled task's last run; make the report by hand (section 7) before the next run |
+| A weekly report shows Live, or today's numbers | Its datasets were not pointed at the snapshot | Check its `report` dataset and the dataset queries in Sources; remake it |
 | Cost chart empty | Job history not readable with the owner's access | Needs `bigquery.jobs.listAll` on the project (Owner or BigQuery Resource Viewer) |
