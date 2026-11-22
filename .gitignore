@@ -31,6 +31,7 @@ __pycache__/
 !04_Scraper/common.py
 !04_Scraper/extraction.py
 !04_Scraper/extract_prompt.md
+!04_Scraper/test_shopify_early_stop.py
 !04_Scraper/fetchers/
 04_Scraper/fetchers/__pycache__/
 

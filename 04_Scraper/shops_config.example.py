@@ -10,6 +10,12 @@ SHOPS = [
     Shop("shop_1", "shopify", "https://www.shop-1.example",
          "Gauteng", "Pretoria", -25.70, 28.20,
          boilerplate=(r"Shipping Information", r"Disclaimer")),
+    # Shopify whose feed is mostly sold items with the live stock at the front:
+    # end the feed read after 2 pages in a row without an available product.
+    # Switch it on only after the shadow check in the status report shows "0 lost".
+    Shop("shop_6", "shopify", "https://shop-6.example",
+         "Gauteng", "Johannesburg", -26.10, 28.00,
+         early_stop_pages=2),
     # WooCommerce: public Store API.
     Shop("shop_2", "woocommerce", "https://shop-2.example",
          "Western Cape", "Cape Town", -33.90, 18.60,

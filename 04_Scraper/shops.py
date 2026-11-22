@@ -34,6 +34,10 @@ class Shop:
     delay: float = 1.0
     # Platform-specific settings (e.g. listing categories for pagelayer).
     options: Dict[str, List[str]] = field(default_factory=dict)
+    # Shopify: end the feed read after this many pages in a row without an available
+    # product (0 = read the whole feed). For a feed that is mostly an archive of sold
+    # items with the live stock at the front; see fetchers/shopify.py, "Early stop".
+    early_stop_pages: int = 0
 
 
 def load_shops() -> List[Shop]:

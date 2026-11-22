@@ -27,7 +27,7 @@ Mac, launchd, Thursday 19:00 (com.mcm.weekly-upload)
 
 Mac, launchd (daily 10:00 and at login): `check_weekly_scrape.sh` alerts when a Sunday scrape or a Thursday upload was missed, and on Wednesday shows the week's status.
 
-**Why over the week:** since 2026-11 Shopify serves its product feed (`/products.json`, the whole catalogue including sold items) only a couple of pages per shop before refusing for an hour or more. The big Shopify shops need up to ~20 pages, so they are read a few pages per session, each continuing where the last stopped. Each Shopify shop finishes with a completeness check against its product sitemap; products missed because pages shifted are read one by one. See `03_Documentation/scraper_error_log.md`.
+**Why over the week:** since 2026-11 Shopify serves its product feed (`/products.json`, the whole catalogue including sold items) only a couple of pages per shop before refusing for an hour or more. The big Shopify shops need up to ~20 pages, so they are read a few pages per session, each continuing where the last stopped. Each Shopify shop finishes with a completeness check against its product sitemap; products missed because pages shifted are read one by one. A shop whose feed is mostly sold items with the live stock at the front can use the early stop (`early_stop_pages` in `shops_config.py`, scraper 2.4.0): the read ends after that many pages in a row without an available product, and the check is then against the products it had available in its last scrape. Every other Shopify shop reads its whole feed and reports a shadow check, what the early stop would have done, in the status report. See `03_Documentation/scraper_error_log.md`.
 
 | Setting | Value |
 |---|---|
@@ -264,7 +264,7 @@ launchctl load -w ~/Library/LaunchAgents/com.mcm.scrape-watchdog.plist
 05_Automation/mac/run_weekly_scrape.sh --status
 ```
 
-prints `06_Datasets/MCM_All_products_<Sunday>_status.txt`: one line per shop with Complete, In progress (Shopify, still reading), Retrying (failed, tried again next session, up to 4 attempts) or FAILED (gave up). A Shopify shop is Complete only when every product in its sitemap was read.
+prints `06_Datasets/MCM_All_products_<Sunday>_status.txt`: one line per shop with Complete, In progress (Shopify, still reading), Retrying (failed, tried again next session, up to 4 attempts) or FAILED (gave up). A Shopify shop is Complete only when every product in its sitemap was read (with the early stop: every product it had available last time). A complete Shopify shop also shows its early-stop check: "would stop at page X of Y ..., 0 lost" means the early stop would have been safe that week; "N LOST" names the available products it would have missed.
 
 - All Complete: nothing to do; Thursday uploads.
 - FAILED: read the log (`06_Datasets/logs/weekly_scrape_<date>.log`), fix the cause, then `run_weekly_scrape.sh --continue --retry-failed` (the shop starts again with new attempts; Shopify shops keep the pages already read).

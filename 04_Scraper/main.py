@@ -38,6 +38,7 @@ import csv
 import json
 import sys
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from dataclasses import asdict
@@ -50,7 +51,7 @@ from fetchers import FETCHERS, shopify
 from scrape_run_summary import RunSummary, ShopRun, summary_path_for
 from shops import load_shops, select_shops
 
-SCRAPER_VERSION = "2.3.0"
+SCRAPER_VERSION = "2.4.0"
 MAX_PRICE = 999999.99           # warehouse quarantines prices above this (PRICE_OUT_OF_RANGE)
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "06_Datasets" / "extraction_cache.json"
 
@@ -66,6 +67,48 @@ def raw_path_for(csv_path: str) -> str:
 
 MAX_ATTEMPTS = 4                # failed attempts per shop per week before giving up (refusals do not count)
 UPLOAD_DAY = 4                  # the week's upload: Thursday 19:00 (days after the Sunday scrape)
+
+
+# Earlier outputs that tell which products a shop last had available (Shopify early stop).
+EARLIER_OUTPUT = re.compile(r"^MCM_(?:All_products|Rescrape)_(\d{4}-\d{2}-\d{2})(?:\.csv|_raw\.jsonl)$")
+
+
+def previous_urls(shop_name: str, csv_path: str) -> List[str]:
+    """URLs the shop had available in its last scrape before this week: from the newest
+    earlier products CSV or raw file (weekly or re-scrape) next to csv_path that has rows
+    for the shop. Empty when there is none. The Shopify early stop checks these."""
+    folder = Path(csv_path).resolve().parent
+    week = Path(csv_path).stem.rsplit("_", 1)[-1]
+    by_date: Dict[str, List[Path]] = {}
+    for f in folder.iterdir():
+        m = EARLIER_OUTPUT.match(f.name)
+        if m and m.group(1) < week:
+            by_date.setdefault(m.group(1), []).append(f)
+    for date in sorted(by_date, reverse=True):
+        urls = set()
+        for f in by_date[date]:
+            urls |= _shop_urls(f, shop_name)
+        if urls:
+            return sorted(urls)
+    return []
+
+
+def _shop_urls(path: Path, shop_name: str) -> set:
+    """URLs of the shop's rows in a products CSV or raw file; empty if it cannot be read."""
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            if path.suffix == ".csv":
+                return {r["url"] for r in csv.DictReader(f) if r.get("shop_name") == shop_name and r.get("url")}
+            urls = set()
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    if r.get("shop_name") == shop_name and r.get("url"):
+                        urls.add(r["url"])
+            return urls
+    except (OSError, ValueError, KeyError, csv.Error) as exc:
+        print(f"    reference: cannot read {path.name}: {exc}", flush=True)
+        return set()
 
 
 def progress_path_for(csv_path: str) -> str:
@@ -121,7 +164,8 @@ def run_session(shops, progress: dict, csv_path: str, limit) -> None:
         st["sessions"] += 1
         try:
             if shop.platform == "shopify":
-                done = shopify.session(shop, http, run, st["shopify"], limit)
+                done = shopify.session(shop, http, run, st["shopify"], limit,
+                                       reference=lambda name=shop.name: previous_urls(name, csv_path))
                 st["products"] = []                 # Shopify rows live in st["shopify"]
                 print(f"   {st['shopify']['note']}", flush=True)
             else:
