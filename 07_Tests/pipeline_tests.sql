@@ -26,15 +26,16 @@ SELECT COUNT(*) AS object_count
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`;
 
 -- 1.2 Objects per type.
--- Expect after 01_DDL/01-12 and one step 9 run: BASE TABLE 27 (22 + rpt_refresh_error_logs
--- + 4 rpt_* report tables), VIEW 26 (20 + 6 pipeline monitoring views from 01_DDL/12).
+-- Expect after 01_DDL/01-13 and one step 9 run: BASE TABLE 28 (22 + rpt_refresh_error_logs
+-- + 4 rpt_* report tables + ops_vitals_snapshots), VIEW 35 (20 + 6 pipeline monitoring views
+-- from 01_DDL/12 + 9 mon_dash_ views from 01_DDL/13).
 SELECT table_type, COUNT(*) AS objects
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.TABLES`
 GROUP BY table_type;
 
 -- 1.3 Procedures deployed.
--- Expect 11: sp_check_scrape_health ... sp_validate_silver_products, sp_refresh_report_tables,
--- sp_run_pipeline, sp_set_shop_rule.
+-- Expect 12: sp_check_scrape_health ... sp_validate_silver_products, sp_refresh_report_tables,
+-- sp_run_pipeline, sp_set_shop_rule, sp_snapshot_pipeline_vitals.
 SELECT routine_name, created, last_altered
 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.ROUTINES`
 ORDER BY routine_name;
@@ -304,6 +305,20 @@ SELECT
     (SELECT pipeline_status FROM statement_competitor_data_warehouse.mon_pipeline_runs WHERE is_latest_run) AS latest_status,
     (SELECT FORMAT('%d of %d', steps_completed, steps_deployed) FROM statement_competitor_data_warehouse.mon_pipeline_runs WHERE is_latest_run) AS latest_steps,
     (SELECT COUNTIF(freshness != 'Fresh') FROM statement_competitor_data_warehouse.mon_shop_freshness) AS shops_not_fresh;
+
+-- 3.11 Dashboard views and weekly snapshots (01_DDL/13, 02_Stored_Procedures/12).
+-- Expect 9 mon_dash_ views, each with row_order; one snapshot per Monday report, 9 datasets each.
+-- Test data (2026-11-15): views 9, views_without_row_order 0, snapshots 1 (BATCH_20261109_050245, 9 datasets).
+SELECT
+    (SELECT COUNT(*) FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.VIEWS`
+     WHERE STARTS_WITH(table_name, 'mon_dash_')) AS views,
+    (SELECT COUNT(*) FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.VIEWS` v
+     WHERE STARTS_WITH(v.table_name, 'mon_dash_')
+       AND NOT EXISTS (SELECT 1 FROM `statement_competitor_data_warehouse.INFORMATION_SCHEMA.COLUMNS` c
+                       WHERE c.table_name = v.table_name AND c.column_name = 'row_order')) AS views_without_row_order,
+    (SELECT COUNT(DISTINCT run_batch_id) FROM statement_competitor_data_warehouse.ops_vitals_snapshots) AS snapshots,
+    (SELECT STRING_AGG(FORMAT('%s (%d datasets)', run_batch_id, n), ', ')
+     FROM (SELECT run_batch_id, COUNT(*) AS n FROM statement_competitor_data_warehouse.ops_vitals_snapshots GROUP BY run_batch_id)) AS snapshot_runs;
 
 
 -- =============================================================================
