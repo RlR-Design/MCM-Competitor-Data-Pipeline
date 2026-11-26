@@ -12,7 +12,8 @@ Purpose  : Vitals of the whole pipeline, for the Pipeline Vitals dashboard
              mon_query_costs          BigQuery usage and estimated cost per day
            A run starts when sp_load_bronze_products logs INFO_STAGE_START.
            Events from the next 6 hours, until the next run starts, belong to
-           that run. Events outside any run (manual CALLs) have no run.
+           that run. Later events before the next run (steps re-run by hand)
+           are marked late_run_batch_id: they recover a failed run.
 When     : Initial setup, after 11_create_report_tables.sql.
            Re-run after any change to this file. Safe to re-run.
 Warning  : Views hold no data. The Pipeline Vitals dashboard reads these views
@@ -87,19 +88,25 @@ SELECT
     END AS severity,
     e.details,
     e.batch_id AS log_batch_id,
-    e.execution_id
+    e.execution_id,
+    -- Outside the 6-hour window but before the next run: a step re-run by hand.
+    late.run_batch_id AS late_run_batch_id
 FROM events e
 LEFT JOIN runs r
     ON e.event_at >= r.run_started_at
    AND (e.event_at < r.next_run_at OR r.next_run_at IS NULL)
-   AND e.event_at < TIMESTAMP_ADD(r.run_started_at, INTERVAL 6 HOUR);
+   AND e.event_at < TIMESTAMP_ADD(r.run_started_at, INTERVAL 6 HOUR)
+LEFT JOIN runs late
+    ON r.run_batch_id IS NULL
+   AND e.event_at >= late.run_started_at
+   AND (e.event_at < late.next_run_at OR late.next_run_at IS NULL);
 
 -- -----------------------------------------------------------------------------
 -- mon_pipeline_step_runs: one row per run per step.
 --   step_status  Completed / Completed with warnings / Failed (an error, or
 --                started without completing) / Not run / Not deployed (the
---                step's procedure had never logged before this run)
--- -----------------------------------------------------------------------------
+--                step's procedure had never logged before this run) /
+--                Recovered (Failed or Not run in the run, then completed by a
 CREATE OR REPLACE VIEW statement_competitor_data_warehouse.mon_pipeline_step_runs
 OPTIONS(description="One row per pipeline run per step (1 to 9): status, start, finish, duration, warnings and errors")
 AS
@@ -141,25 +148,61 @@ agg AS (
     FROM statement_competitor_data_warehouse.mon_pipeline_events
     WHERE run_batch_id IS NOT NULL
     GROUP BY run_batch_id, step_no
+),
+-- Steps re-run by hand after the run's window, before the next run.
+late AS (
+    SELECT
+        late_run_batch_id AS run_batch_id,
+        step_no,
+        MAX(IF(event_type = 'INFO_STAGE_COMPLETE', event_at, NULL)) AS recovered_at
+    FROM statement_competitor_data_warehouse.mon_pipeline_events
+    WHERE late_run_batch_id IS NOT NULL
+    GROUP BY late_run_batch_id, step_no
+),
+base AS (
+    SELECT
+        r.run_batch_id,
+        r.run_started_at,
+        s.step_no,
+        s.step_name,
+        s.procedure_name,
+        CASE
+            WHEN a.errors > 0 OR (a.started_at IS NOT NULL AND a.finished_at IS NULL) THEN 'Failed'
+            WHEN a.started_at IS NULL AND (d.first_logged_at IS NULL OR d.first_logged_at > r.run_started_at) THEN 'Not deployed'
+            WHEN a.started_at IS NULL THEN 'Not run'
+            WHEN a.warnings > 0 THEN 'Completed with warnings'
+            ELSE 'Completed'
+        END AS original_status,
+        a.started_at,
+        a.finished_at,
+        TIMESTAMP_DIFF(a.finished_at, a.started_at, SECOND) AS duration_seconds,
+        COALESCE(a.warnings, 0) AS warnings,
+        COALESCE(a.errors, 0) AS errors,
+        a.completion_details,
+        a.latest_issue
+    FROM runs r
+    CROSS JOIN steps s
+    LEFT JOIN agg a ON a.run_batch_id = r.run_batch_id AND a.step_no = s.step_no
+    LEFT JOIN deployed d ON d.step_no = s.step_no
 )
 SELECT
-    r.run_batch_id,
-    r.run_started_at,
-    s.step_no,
-    s.step_name,
-    s.procedure_name,
-    CASE
-        WHEN a.errors > 0 OR (a.started_at IS NOT NULL AND a.finished_at IS NULL) THEN 'Failed'
-        WHEN a.started_at IS NULL AND (d.first_logged_at IS NULL OR d.first_logged_at > r.run_started_at) THEN 'Not deployed'
-        WHEN a.started_at IS NULL THEN 'Not run'
-        WHEN a.warnings > 0 THEN 'Completed with warnings'
-        ELSE 'Completed'
-    END AS step_status,
-    a.started_at,
-    a.finished_at,
-    TIMESTAMP_DIFF(a.finished_at, a.started_at, SECOND) AS duration_seconds,
-    COALESCE(a.warnings, 0) AS warnings,
-    COALESCE(a.errors, 0) AS errors,
+    b.run_batch_id,
+    b.run_started_at,
+    b.step_no,
+    b.step_name,
+    b.procedure_name,
+    IF(b.original_status IN ('Failed', 'Not run') AND l.recovered_at IS NOT NULL, 'Recovered', b.original_status) AS step_status,
+    b.started_at,
+    b.finished_at,
+    b.duration_seconds,
+    b.warnings,
+    b.errors,
+    b.completion_details,
+    b.latest_issue,
+    b.original_status,
+    IF(b.original_status IN ('Failed', 'Not run'), l.recovered_at, NULL) AS recovered_at
+FROM base b
+LEFT JOIN late l ON l.run_batch_id = b.run_batch_id AND l.step_no = b.step_no;
     a.completion_details,
     a.latest_issue
 FROM runs r
@@ -170,7 +213,8 @@ LEFT JOIN deployed d ON d.step_no = s.step_no;
 -- -----------------------------------------------------------------------------
 -- mon_pipeline_runs: one row per run.
 --   pipeline_status  Failed (a step failed) / Incomplete (a deployed step did
---                    not run) / Completed with warnings / Healthy
+--                    not run) / Recovered (every failed step was re-run by hand
+--                    before the next run) / Completed with warnings / Healthy
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW statement_competitor_data_warehouse.mon_pipeline_runs
 OPTIONS(description="One row per pipeline run: overall status, step counts, timings, scrape health and data volumes per layer")
@@ -180,12 +224,15 @@ WITH steps AS (
         run_batch_id,
         MIN(run_started_at) AS run_started_at,
         MAX(finished_at) AS run_finished_at,
-        COUNTIF(step_status IN ('Completed', 'Completed with warnings')) AS steps_completed,
+        COUNTIF(step_status IN ('Completed', 'Completed with warnings', 'Recovered')) AS steps_completed,
+        COUNTIF(step_status = 'Recovered') AS steps_recovered,
         COUNTIF(step_status = 'Completed with warnings') AS steps_with_warnings,
         COUNTIF(step_status = 'Failed') AS steps_failed,
         COUNTIF(step_status = 'Not run') AS steps_not_run,
         COUNTIF(step_status != 'Not deployed') AS steps_deployed,
         STRING_AGG(IF(step_status = 'Failed', FORMAT('%d %s', step_no, step_name), NULL), ', ' ORDER BY step_no) AS failed_steps,
+        STRING_AGG(IF(step_status = 'Recovered', FORMAT('%d %s', step_no, step_name), NULL), ', ' ORDER BY step_no) AS recovered_steps,
+        MAX(recovered_at) AS recovered_at,
         ANY_VALUE(IF(step_no = 1, completion_details, NULL)) AS load_details,
         ANY_VALUE(IF(step_no = 4, completion_details, NULL)) AS silver_details,
         ANY_VALUE(IF(step_no = 7, completion_details, NULL)) AS history_details,
@@ -226,6 +273,7 @@ SELECT
     CASE
         WHEN s.steps_failed > 0 THEN 'Failed'
         WHEN s.steps_not_run > 0 THEN 'Incomplete'
+        WHEN s.steps_recovered > 0 THEN 'Recovered'
         WHEN s.steps_with_warnings > 0 THEN 'Completed with warnings'
         ELSE 'Healthy'
     END AS pipeline_status,
@@ -234,6 +282,9 @@ SELECT
     s.steps_with_warnings,
     s.steps_failed,
     s.failed_steps,
+    s.steps_recovered,
+    s.recovered_steps,
+    s.recovered_at,
     m.run_status AS scrape_status,
     m.shops,
     m.shops_healthy,

@@ -4,7 +4,7 @@ A bird's-eye view of the whole pipeline: did the last run work, which steps and 
 
 | | |
 |---|---|
-| Where | Claude dashboard "Pipeline Vitals" (claude.ai, under Artifacts): the live template. Each Monday a frozen copy, "Pipeline Vitals: run of <date>", is saved beside it (section 7). Private: only the owner can open them |
+| Where | Claude dashboard "Pipeline Vitals" (claude.ai, under Artifacts): the live template. Each Thursday evening a frozen copy, "Pipeline Vitals: run of <date>", is saved beside it (section 7). Private: only the owner can open them |
 | Role | Backend monitoring. The client-facing dashboard is the separate Data Studio report, which reads only the `rpt_*` tables |
 | Data | Live queries to BigQuery each time the page opens, through the owner's Google Cloud BigQuery connector |
 | Source objects | `mon_dash_*` views (`01_DDL/13_create_dashboard_views.sql`), built on the `mon_*` views of `01_DDL/08` and `01_DDL/12`; weekly snapshots in `ops_vitals_snapshots` |
@@ -68,7 +68,7 @@ mon_shop_freshness, mon_warehouse_tables, mon_query_costs
         ▼  01_DDL/13: one view per dashboard section
 mon_dash_vitals, _problems, _steps, _shopruns, _runs, _shops, _events, _costs, _layers
         │                                   │
-        │ live, each time the page opens    │ Monday: sp_snapshot_pipeline_vitals
+        │ live, each time the page opens    │ Thursday: sp_snapshot_pipeline_vitals
         ▼                                   ▼
 Claude dashboard "Pipeline Vitals"     ops_vitals_snapshots (one JSON set per run)
 (the template)                              │
@@ -79,7 +79,7 @@ Claude dashboard "Pipeline Vitals"     ops_vitals_snapshots (one JSON set per ru
 Design decisions:
 
 - **Views, not report tables.** The client report reads `rpt_*` snapshots rebuilt by step 9. Monitoring must still work when step 9 itself fails, so the dashboard reads the `mon_*` views live.
-- **One run = one Bronze load.** The logs of steps 4 to 9 carry their own batch ids, so events are attached to a run by time: everything logged from step 1's start, for up to 6 hours, until the next run starts. Manual `CALL`s outside that window belong to no run and still show in Warnings and errors.
+- **One run = one Bronze load.** The logs of steps 4 to 9 carry their own batch ids, so events are attached to a run by time: everything logged from step 1's start, for up to 6 hours, until the next run starts. Steps re-run by hand after that window but before the next run are marked `late_run_batch_id` and count as that run's recovery (status Recovered). Manual `CALL`s before the first run belong to no run and still show in Warnings and errors.
 - **Steps that did not exist yet** show as Not deployed, not as failures (step 9 was added on 7 November 2026, so the runs of 26 October and 2 November show it as Not deployed).
 - **One view per section.** Since 15 November 2026 every dataset on the page reads a `mon_dash_<dataset id>` view, so the logic lives in the repository, is versioned in git, and can be frozen by one generic procedure.
 - **Claude dashboard rather than Data Studio.** The owner chose it on 14 November 2026: it queries BigQuery live without a separate data source per view, opens on a phone, and keeps the client's Data Studio report separate from internal monitoring.
@@ -92,9 +92,9 @@ Design decisions:
 
 | View | Grain | Built from | Key columns |
 |---|---|---|---|
-| `mon_pipeline_events` | log event | The six step log tables | `run_batch_id`, `event_at`, `step_no`, `procedure_name`, `event_type`, `severity` (Info, Warning, Error), `details` |
-| `mon_pipeline_step_runs` | run x step | `mon_pipeline_events` | `step_no`, `step_name`, `step_status`, `started_at`, `finished_at`, `duration_seconds`, `warnings`, `errors`, `latest_issue` |
-| `mon_pipeline_runs` | run | `mon_pipeline_step_runs`, `mon_scrape_runs`, both validity logs | `pipeline_status`, steps completed / with warnings / failed, `scrape_status`, shops per status, `products_in_csv`, quarantined rows, `silver_rows_changed`, `price_changes`, `reconciliation_issues`, `pipeline_minutes`, `scrape_minutes`, `days_since_previous_run`, `is_latest_run` |
+| `mon_pipeline_events` | log event | The six step log tables | `run_batch_id`, `late_run_batch_id`, `event_at`, `step_no`, `procedure_name`, `event_type`, `severity` (Info, Warning, Error), `details` |
+| `mon_pipeline_step_runs` | run x step | `mon_pipeline_events` | `step_no`, `step_name`, `step_status`, `original_status`, `recovered_at`, `started_at`, `finished_at`, `duration_seconds`, `warnings`, `errors`, `latest_issue` |
+| `mon_pipeline_runs` | run | `mon_pipeline_step_runs`, `mon_scrape_runs`, both validity logs | `pipeline_status`, steps completed / with warnings / failed / recovered, `recovered_steps`, `scrape_status`, shops per status, `products_in_csv`, quarantined rows, `silver_rows_changed`, `price_changes`, `reconciliation_issues`, `pipeline_minutes`, `scrape_minutes`, `days_since_previous_run`, `is_latest_run` |
 | `mon_shop_freshness` | shop | `mon_scrape_shop_runs` | `freshness`, `latest_status`, `last_good_scrape_at`, `days_since_good_scrape`, `failed_runs_in_a_row`, `failure_rate_pct`, `latest_error` |
 | `mon_warehouse_tables` | table | `__TABLES__` | `layer`, `row_count`, `size_mb`, `last_modified_at` |
 | `mon_query_costs` | day x source | `region-us-east1`.INFORMATION_SCHEMA.JOBS_BY_PROJECT (90 days) | `jobs`, `failed_jobs`, `gib_billed`, `est_cost_usd` |
@@ -114,11 +114,12 @@ Figures taken from log text: `silver_rows_changed` (step 4 "Rows inserted or cha
 | Step: Completed with warnings | Finished, logged warnings |
 | Step: Failed | Logged an error, or started without finishing |
 | Step: Not run | Deployed before this run but never started (an earlier step stopped the run) |
+| Step: Recovered | Failed or Not run in the run, then re-run by hand and completed before the next run. `original_status` keeps what happened in the run; `recovered_at` the time of the re-run |
 | Step: Not deployed | Its procedure had never logged anything before this run |
-| Run: Healthy / Completed with warnings / Incomplete / Failed | Failed if any step failed; Incomplete if a deployed step did not run; Completed with warnings if any step had warnings |
+| Run: Healthy / Completed with warnings / Recovered / Incomplete / Failed | Failed if any step failed; Incomplete if a deployed step did not run; Recovered if every failed or missed step was re-run by hand; Completed with warnings if any step had warnings |
 | Shop: Fresh / Stale / Critical | Fresh: latest scrape not FAILED. Stale: 1 failed scrape in a row. Critical: 2 or more in a row, or never scraped cleanly |
-| Overall health (dashboard header) | Needs attention: run Failed or Incomplete, a shop Critical, or last run more than 8 days ago. Watch: run completed with warnings, scrape not HEALTHY, or a shop Stale. Healthy: none of these |
-| Next run date | The next Monday (the pipeline runs on Mondays at 07:00 after the Sunday 21:00 scrape) |
+| Overall health (dashboard header) | Needs attention: run Failed or Incomplete, a shop Critical, or last run more than 8 days ago. Watch: run Recovered or completed with warnings, scrape not HEALTHY, or a shop Stale. Healthy: none of these |
+| Next run date | The next Thursday, today on a Thursday (the scraper uploads the week's CSV at 19:00 after its sessions from Sunday 21:00, and the upload starts the pipeline) |
 
 ---
 
@@ -153,6 +154,7 @@ Every rule looks at the latest run only. Change a rule, threshold or "What to do
 |---|---|---|---|
 | Schedule | No pipeline run for N days | Critical | Last run more than 8 days ago |
 | Warehouse | Step N failed or did not run | Critical | `step_status` Failed or Not run |
+| Warehouse | Step N: failed, recovered by hand | Medium | `step_status` Recovered and `original_status` Failed. No action for a one-off BigQuery error |
 | Scraper | N shops rate limited (HTTP 429), blocked (HTTP 403), not found (HTTP 404) or other cause | High; Critical if any of them failed two runs or more in a row | Shop `health_status` FAILED, grouped by cause |
 | Scraper | N shops scraped with warnings | Medium | Shop `health_status` WARNING |
 | Data quality | N rows quarantined | High | Bronze plus Silver quarantined rows above 0 |
@@ -194,31 +196,39 @@ Each problem carries a fixed "What to do" text. Keep them in line with `scraper_
 10. **Problem advice corrected.** The "What to do" texts for HTTP 429 and 403 still advised a browser User-Agent, which contradicts the scraper fix of 14 November (2.2.0 sends an honest User-Agent; see `scraper_error_log.md`). Rewritten in `mon_dash_problems`, and the 9 November snapshot retaken so its report carries the corrected texts.
 11. **Restored documentation.** The edit of this file on the evening of 14 November started from an older copy and dropped the "This week's problems" sections; restored, keeping that edit's Role line and wording.
 
+### 24 November 2026
+
+12. **Run of 16 November recovered.** Step 6 failed with a one-off BigQuery error (`NORMALISATION_MERGE_FAILURE`, "Retrying may solve the problem"), so steps 7 to 9 did not run. Steps 6 to 9 were re-run by hand on 24 November, 08:55 to 08:57; all completed.
+13. **Recovered status**, at the owner's request, so a run fixed by hand no longer shows Failed. `mon_pipeline_events` gains `late_run_batch_id` (events after the 6 hour window, before the next run); `mon_pipeline_step_runs` shows Recovered with `original_status` and `recovered_at`; `mon_pipeline_runs` gains Recovered, `steps_recovered`, `recovered_steps` and `recovered_at`. Overall health treats Recovered as Watch; `mon_dash_problems` lists a recovered failure as Medium. Checked: 16 November shows steps 6 to 9 Recovered, 9 of 9 completed; earlier runs unchanged (the manual step 9 of 7 November now attaches to the 2 November run as a late event, but only Failed or Not run steps can be Recovered, so step 9 stays Not deployed there). The 16 November snapshot was retaken, and its report's page updated to colour Recovered.
+14. **Thursday schedule.** Scraper 2.4.0 scrapes in sessions from Sunday 21:00 and uploads on Thursday at 19:00, so the pipeline now runs on Thursday evening. Next run date, the overdue text, the weekly report task (now Thursday 21:33 SAST, with a guard against a run still in progress) and this file follow it. The task fired on Monday 23 November and correctly made no report.
+15. Removed three stray spaces before this file's title.
+16. **Thursday wake.** The Mac slept on weekday evenings, which could miss the 19:00 upload and so the report. Added one-off wakes every Thursday at 18:55 for 52 weeks (`05_Automation/README.md`, B5); the Sunday 20:55 wake is unchanged.
+
 Add an entry here for every later change: date, what changed, why.
 
 ---
 
 ## 7. Weekly frozen reports
 
-**What they are.** Each Monday a copy of the template is saved as a separate dashboard, "Pipeline Vitals: run of <date>" (for example "Pipeline Vitals: run of 16 Nov 2026"). It has the template's page as it was that Monday, and that run's numbers frozen: they never change, however much later runs or fixes change the warehouse. The template stays live and keeps improving; past reports keep the layout they were made with.
+**What they are.** Each Thursday a copy of the template is saved as a separate dashboard, "Pipeline Vitals: run of <date>" (for example "Pipeline Vitals: run of 16 Nov 2026"). It has the template's page as it was that day, and that run's numbers frozen: they never change, however much later runs or fixes change the warehouse. The template stays live and keeps improving; past reports keep the layout they were made with.
 
 **How a week is frozen.**
 
-1. The pipeline runs on Monday about 07:00 (step 1 to 9).
-2. At 08:03 the scheduled task "Pipeline Vitals weekly report" (claude.ai, scheduled tasks) starts:
+1. The scraper on the Mac uploads the week's CSV on Thursday at 19:00, which starts the pipeline (step 1 to 9).
+2. At 21:33 the scheduled task "Pipeline Vitals weekly report" (claude.ai, scheduled tasks) starts:
    - Checks the latest run is from this week. If not, no report: it tells the owner the pipeline did not run.
    - `CALL sp_snapshot_pipeline_vitals(FALSE)`: copies every `mon_dash_` view into `ops_vitals_snapshots` for that run (one JSON array per view). A second call keeps the existing snapshot.
    - Reads the template's page and datasets, creates the new dashboard, points every `mon_dash_` dataset at the snapshot, sets `report` to mode `frozen`, and copies the page unchanged.
    - Sends the owner a push notification: the run, this week's problems in order, the focus area and the report link.
 3. The task runs in the cloud with automatic approval; it reads BigQuery through the owner's Google Cloud BigQuery connector and writes nothing in BigQuery except the snapshot.
 
-**Making one by hand** (for a missed Monday, or after a manual pipeline run): ask Claude "make this week's Pipeline Vitals report", or run the scheduled task now from its page. Only the latest run can be frozen, so do it before the next run.
+**Making one by hand** (for a missed Thursday, or after a manual pipeline run): ask Claude "make this week's Pipeline Vitals report", or run the scheduled task now from its page. Only the latest run can be frozen, so do it before the next run.
 
 **Re-freezing a week.** `CALL sp_snapshot_pipeline_vitals(TRUE)` retakes the snapshot of the latest run (its report shows the new snapshot time). Past runs cannot be re-frozen.
 
 **Improving the reports over time.** Change the template, not the reports. A change reaches every report made after it:
 
-| Change | Where | Frozen next Monday? |
+| Change | Where | Frozen next Thursday? |
 |---|---|---|
 | Wording, layout, a chart drawn from existing data | Template page (ask Claude) | Yes, the page is copied |
 | A new problem rule, threshold or "What to do" text | `mon_dash_problems` in `01_DDL/13`, re-run the file | Yes |
@@ -239,7 +249,7 @@ ORDER BY taken_at DESC;
 ## 8. Changing the dashboard
 
 - **Ask Claude** in a chat for any change by name ("add a chart of HTTP errors per shop", "make the shop table sortable"). The page lives in the template dashboard; the logic of each section lives in its `mon_dash_` view in `01_DDL/13`.
-- **Change the template, not a weekly report.** Every Monday's report copies the template as it is then (section 7).
+- **Change the template, not a weekly report.** Every Thursday's report copies the template as it is then (section 7).
 - **Change what a section shows:** edit its `mon_dash_` view in `01_DDL/13` and re-run the file. Keep the `row_order` column. Editing a query in the dashboard's Sources panel works for the template, but anything that no longer reads a `mon_dash_` view is not frozen in the weekly reports.
 - **Change a rule** (what counts as Stale, the 6 hour run window, severity): change the view in `01_DDL/12`, re-run the file in BigQuery, then note it in the build log. The dashboard picks it up on its next load.
 - **Add a pipeline step:** add it to the `CASE` in `mon_pipeline_events` and to the `steps` list in `mon_pipeline_step_runs`, re-run `01_DDL/12`.
@@ -256,8 +266,9 @@ ORDER BY taken_at DESC;
 | The page asks to connect or allow BigQuery | The connector is signed out or not yet allowed for this dashboard | Allow it on the page, or reconnect Google Cloud BigQuery in Claude's connector settings |
 | A step shows Failed but the run finished | The step logged a `*_FAILURE` event | Read the event in Warnings and errors, then the step's log table |
 | A run is missing | Step 1 did not log a start (the trigger never fired) | Check `ops_pipeline_trigger_log` and the Cloud Run function logs |
-| Events show under no run | A procedure was called by hand more than 6 hours after step 1, or with no step 1 | Expected for manual runs |
-| Last run tile shows more than 8 days | The weekly scrape or upload did not happen | Check the Mac scrape log (`05_Automation/mac/`) and the `incoming/` bucket folder |
-| No weekly report on Monday | The pipeline did not run (the task says so), or the task failed | Open the scheduled task's last run; make the report by hand (section 7) before the next run |
+| Events show under no run | A procedure was called by hand before the first run | Expected. Calls after a run count as its recovery |
+| A step shows Recovered | It failed or did not run, and was re-run by hand before the next run | Read the original error in This week's problems; no action if it was a one-off |
+| Last run tile shows more than 8 days | The weekly scrape or upload did not happen | Check the week's status file and log in `06_Datasets` on the Mac, and the `incoming/` bucket folder |
+| No weekly report on Thursday | The pipeline did not run (the task says so), or the task failed | Open the scheduled task's last run; make the report by hand (section 7) before the next run |
 | A weekly report shows Live, or today's numbers | Its datasets were not pointed at the snapshot | Check its `report` dataset and the dataset queries in Sources; remake it |
 | Cost chart empty | Job history not readable with the owner's access | Needs `bigquery.jobs.listAll` on the project (Owner or BigQuery Resource Viewer) |

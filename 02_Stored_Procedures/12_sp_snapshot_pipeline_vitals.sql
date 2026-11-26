@@ -7,7 +7,7 @@ Purpose  : Freezes the Pipeline Vitals dashboard for the latest pipeline run:
            ops_vitals_snapshots, one row per view, as a JSON array in
            row_order. The weekly report for that run reads these rows, so
            its numbers never change afterwards.
-When     : Deploy at setup. Called every Monday by the scheduled task that
+When     : Deploy at setup. Called every Thursday evening by the scheduled task that
            makes the weekly report (03_Documentation/Pipeline_Vitals_Dashboard.md),
            after the pipeline has run. Not a pipeline step: a failure here
            never affects the warehouse.

@@ -58,14 +58,15 @@ p AS (
 v AS (
   SELECT r.*, s.*, c.*, p.*,
          DATE_DIFF(CURRENT_DATE('Africa/Johannesburg'), DATE(r.run_started_at, 'Africa/Johannesburg'), DAY) AS days_since_last_run,
+         -- Next Thursday (today on a Thursday): the scraper uploads at 19:00 and the pipeline starts.
          DATE_ADD(CURRENT_DATE('Africa/Johannesburg'),
-                  INTERVAL MOD(9 - EXTRACT(DAYOFWEEK FROM CURRENT_DATE('Africa/Johannesburg')), 7) DAY) AS next_run_date
+                  INTERVAL MOD(12 - EXTRACT(DAYOFWEEK FROM CURRENT_DATE('Africa/Johannesburg')), 7) DAY) AS next_run_date
   FROM r, s, c, p
 )
 SELECT
   CASE
     WHEN pipeline_status IN ('Failed', 'Incomplete') OR shops_critical > 0 OR days_since_last_run > 8 THEN 'Needs attention'
-    WHEN pipeline_status = 'Completed with warnings' OR scrape_status != 'HEALTHY' OR shops_stale > 0 THEN 'Watch'
+    WHEN pipeline_status IN ('Recovered', 'Completed with warnings') OR scrape_status != 'HEALTHY' OR shops_stale > 0 THEN 'Watch'
     ELSE 'Healthy'
   END AS overall_health,
   pipeline_status,
@@ -142,8 +143,8 @@ problems AS (
   -- Pipeline overdue.
   SELECT 1 AS priority, 'Schedule' AS area,
          FORMAT('No pipeline run for %d days', age.days) AS headline,
-         FORMAT('The last run was %s. Runs are due every Monday at 07:00.', age.run_label) AS detail,
-         'Check the Mac scrape log and the incoming/ folder in the bucket: the pipeline only starts when a CSV is uploaded.' AS action,
+         FORMAT("The last run was %s. Runs are due every Thursday at about 19:00, when the scraper uploads the week's CSV.", age.run_label) AS detail,
+         "Check the week's status file and log in 06_Datasets on the Mac, then the incoming/ folder in the bucket: the pipeline only starts when a CSV is uploaded." AS action,
          'vitals' AS section,
          1000000 AS impact
   FROM age WHERE age.days > 8
@@ -159,6 +160,21 @@ problems AS (
   FROM statement_competitor_data_warehouse.mon_pipeline_step_runs s
   JOIN lr USING (run_batch_id)
   WHERE s.step_status IN ('Failed', 'Not run')
+
+  UNION ALL
+  -- Steps that failed in the run and were re-run by hand before the next run.
+  SELECT 3, 'Warehouse',
+         FORMAT('Step %d, %s: failed, recovered by hand', s.step_no, s.step_name),
+         FORMAT('Re-run on %s (%s). Original error: %s',
+                FORMAT_TIMESTAMP('%a %d %b, %H:%M', s.recovered_at, 'Africa/Johannesburg'),
+                lr.recovered_steps,
+                COALESCE(LEFT(s.latest_issue, 240), 'none logged')),
+         'No action if the error was a one-off BigQuery error (it says Retrying may solve the problem). If it repeats next run, fix the cause in the step.',
+         'flow',
+         1000 - s.step_no
+  FROM statement_competitor_data_warehouse.mon_pipeline_step_runs s
+  JOIN lr USING (run_batch_id)
+  WHERE s.step_status = 'Recovered' AND s.original_status = 'Failed'
 
   UNION ALL
   -- Shops that failed to scrape, grouped by cause.
@@ -253,7 +269,7 @@ problems AS (
          s.warnings
   FROM statement_competitor_data_warehouse.mon_pipeline_step_runs s
   JOIN lr USING (run_batch_id)
-  WHERE s.warnings > 0 AND s.step_no NOT IN (3, 8) AND s.step_status != 'Failed'
+  WHERE s.warnings > 0 AND s.step_no NOT IN (3, 8) AND s.step_status NOT IN ('Failed', 'Recovered')
 )
 SELECT
   FORMAT('%d-%02d', priority, ROW_NUMBER() OVER (ORDER BY priority, CASE area WHEN 'Schedule' THEN 1 WHEN 'Warehouse' THEN 2 WHEN 'Scraper' THEN 3 WHEN 'Data quality' THEN 4 WHEN 'Volume' THEN 5 ELSE 6 END, impact DESC, headline)) AS problem_id,

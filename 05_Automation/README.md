@@ -231,14 +231,18 @@ launchctl start com.mcm.weekly-upload
 
 ### B5. Make sure the Mac is awake
 
-The jobs run under your macOS user: you must be signed in (a locked screen is fine). launchd runs a missed job when the Mac wakes from sleep, but not if it was switched off. To wake (or power on) the Mac every Sunday at 20:55 for the scrape:
+The jobs run under your macOS user: you must be signed in (a locked screen is fine). launchd runs a missed job when the Mac wakes from sleep, but not if it was switched off. Two wakes are set: Sunday 20:55 for the scrape, and Thursday 18:55 for the upload.
 
 ```bash
+# Every Sunday at 20:55 (wake, or power on): the scrape.
 sudo pmset repeat wakeorpoweron U 20:55:00
+# Thursdays at 18:55 for the next 52 weeks: the upload. pmset repeat holds only
+# one wake time, so these are one-off wakes. Renew them each November.
+for i in $(seq 0 51); do sudo pmset schedule wake "$(date -v+thu -v+${i}w '+%m/%d/%Y') 18:55:00"; done
 pmset -g sched        # shows the schedule
 ```
 
-`pmset repeat` holds one wake time, so the 2-hourly sessions and the Thursday 19:00 upload run on time if the Mac is awake, otherwise as soon as it wakes. A session missed during sleep just runs later (the scrape has until Thursday). Claude Code must be logged in by Thursday 19:00. Keep the Mac plugged in on Sunday evenings.
+The Thursday wake matters: the weekly report (Pipeline Vitals, Thursday 21:33) is made only if the upload ran at 19:00. Extraction and upload take about 30 minutes. The one-off Thursday wakes wake the Mac from sleep but do not power it on. The 2-hourly sessions run on time if the Mac is awake, otherwise as soon as it wakes. A session missed during sleep just runs later (the scrape has until Thursday). Claude Code must be logged in by Thursday 19:00. Keep the Mac plugged in on Sunday evenings.
 
 - The script keeps the Mac from idle sleep while it runs (`caffeinate`), so a scrape is not cut off halfway. A closed lid (without an external display) still sleeps the Mac: leave the lid open.
 - Sleep is better than shut down. After a power-on with FileVault the Mac waits at the login screen, and the jobs only run once you have logged in.

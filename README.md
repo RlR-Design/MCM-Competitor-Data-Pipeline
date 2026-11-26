@@ -128,7 +128,7 @@ Monitoring views:
 - `mon_shop_freshness`: Fresh, Stale or Critical per shop, with its last good scrape and failures in a row.
 - `mon_warehouse_tables`, `mon_query_costs`: table sizes per layer, and BigQuery usage and cost per day.
 
-These feed the **Pipeline Vitals** dashboard, a private Claude dashboard that queries them live (through the `mon_dash_` views of `01_DDL/13`) each time it opens. Every Monday at 08:03 a scheduled task freezes that week's run (`sp_snapshot_pipeline_vitals`, `02_Stored_Procedures/12`, into `ops_vitals_snapshots`) and saves a frozen copy, "Pipeline Vitals: run of <date>". See `03_Documentation/Pipeline_Vitals_Dashboard.md`.
+These feed the **Pipeline Vitals** dashboard, a private Claude dashboard that queries them live (through the `mon_dash_` views of `01_DDL/13`) each time it opens. Every Thursday at 21:33, after the 19:00 upload and pipeline run, a scheduled task freezes that week's run (`sp_snapshot_pipeline_vitals`, `02_Stored_Procedures/12`, into `ops_vitals_snapshots`) and saves a frozen copy, "Pipeline Vitals: run of <date>". See `03_Documentation/Pipeline_Vitals_Dashboard.md`.
 
 ### Scrape run summary file
 
