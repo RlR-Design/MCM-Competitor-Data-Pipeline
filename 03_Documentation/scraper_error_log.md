@@ -11,6 +11,34 @@ Newest entry first. Shops are named shop_1..shop_10 (the key is in the local Man
 
 ---
 
+## 2026-11-26 · shop_2 sold out, 1 product left · OPEN
+
+**What happened:** the 2026-11-22 weekly scrape read shop_2's whole feed (182 products, all
+in the sitemap) and found 1 available product, against 28 the week before. 26 of last week's
+28 are gone from the shop entirely; nearly everything left is tagged sold out. Not a scraper
+fault: the owner checked the site on 11-26 and confirmed it. The shop may have been sold.
+
+**Why it needed a rule:** with the default rule the run of 11-26 would not have logged the
+sales. 1 product is below 0.7 x the baseline (~28), so sp_check_scrape_health marks the
+scrape FAILED (LOW_PRODUCT_COUNT), and Gold ignores FAILED scrapes for delisting. Even then,
+the default grace of 2 scrapes would have held them as PENDING_DELIST for another week.
+
+**Done (2026-11-26, before the 19:00 upload):** at the owner's request, shop_2 has its own row in
+ref_shop_rules: `delist_grace_scrapes = 1`, `min_count_ratio = 0`, everything else from the
+default. The scrape is accepted and every product missing from it is SOLD (DELISTED), dated
+this scrape. shop_2 had no earlier scrape gaps, so the rule changes no past events; its 2
+products already PENDING_DELIST become SOLD as well.
+
+**Open:** the owner is phoning the shop to find out what happened. Then:
+- Shop closed or sold on: take it out of the shop list (`shops_config.py`) and decide what
+  the warehouse keeps for it.
+- Restocking under the same site: put the rule back to the default,
+  `CALL sp_set_shop_rule('<shop_2>', NULL, 2, 0.7, NULL, NULL, NULL, NULL, NULL)`, because
+  `min_count_ratio = 0` would also hide a real scraper failure for this shop.
+- Meanwhile check shop_2 in each weekly status report.
+
+---
+
 ## 2026-11-08 · Shopify shops blocked (429 / 403) · MITIGATED
 
 **Root cause found 2026-11-14:** the scraper sent a *Chrome browser* User-Agent from a Python
